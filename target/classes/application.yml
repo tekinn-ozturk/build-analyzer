@@ -1,0 +1,12 @@
+server:
+  port: 8090   # 8080 is left to Jenkins
+
+spring:
+  application:
+    name: build-analyzer
+
+jenkins:
+  url: http://localhost:8080
+  # Credentials come from the environment; never commit real values here.
+  username: admin
+  api-token: 11a86cf8cd2b258a9390c4d945632a47bd

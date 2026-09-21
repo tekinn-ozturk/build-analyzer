@@ -1,0 +1,16 @@
+C:\Users\PC\Desktop\build-analyzer\src\main\java\com\company\buildanalyzer\api\controller\BuildAnalysisController.java
+C:\Users\PC\Desktop\build-analyzer\src\main\java\com\company\buildanalyzer\api\dto\request\AnalyzeBuildRequest.java
+C:\Users\PC\Desktop\build-analyzer\src\main\java\com\company\buildanalyzer\api\dto\response\AnalyzeBuildResponse.java
+C:\Users\PC\Desktop\build-analyzer\src\main\java\com\company\buildanalyzer\api\error\GlobalExceptionHandler.java
+C:\Users\PC\Desktop\build-analyzer\src\main\java\com\company\buildanalyzer\api\mapper\BuildAnalysisResponseMapper.java
+C:\Users\PC\Desktop\build-analyzer\src\main\java\com\company\buildanalyzer\application\classifier\ErrorClassifier.java
+C:\Users\PC\Desktop\build-analyzer\src\main\java\com\company\buildanalyzer\application\context\BuildContextBuilder.java
+C:\Users\PC\Desktop\build-analyzer\src\main\java\com\company\buildanalyzer\application\port\out\BuildSourcePort.java
+C:\Users\PC\Desktop\build-analyzer\src\main\java\com\company\buildanalyzer\application\usecase\AnalyzeBuildService.java
+C:\Users\PC\Desktop\build-analyzer\src\main\java\com\company\buildanalyzer\application\usecase\AnalyzeBuildUseCase.java
+C:\Users\PC\Desktop\build-analyzer\src\main\java\com\company\buildanalyzer\BuildAnalyzerApplication.java
+C:\Users\PC\Desktop\build-analyzer\src\main\java\com\company\buildanalyzer\domain\model\BuildAnalysisContext.java
+C:\Users\PC\Desktop\build-analyzer\src\main\java\com\company\buildanalyzer\domain\model\ErrorCategory.java
+C:\Users\PC\Desktop\build-analyzer\src\main\java\com\company\buildanalyzer\infrastructure\jenkins\JenkinsBuildSourceAdapter.java
+C:\Users\PC\Desktop\build-analyzer\src\main\java\com\company\buildanalyzer\infrastructure\jenkins\JenkinsHttpClient.java
+C:\Users\PC\Desktop\build-analyzer\src\main\java\com\company\buildanalyzer\infrastructure\jenkins\JenkinsProperties.java

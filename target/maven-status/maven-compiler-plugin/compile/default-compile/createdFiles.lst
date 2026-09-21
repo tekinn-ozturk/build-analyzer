@@ -1,0 +1,17 @@
+com\company\buildanalyzer\application\classifier\ErrorClassifier.class
+com\company\buildanalyzer\application\port\out\BuildSourcePort.class
+com\company\buildanalyzer\application\usecase\AnalyzeBuildUseCase.class
+com\company\buildanalyzer\infrastructure\jenkins\JenkinsBuildSourceAdapter.class
+com\company\buildanalyzer\application\usecase\AnalyzeBuildService.class
+com\company\buildanalyzer\api\dto\request\AnalyzeBuildRequest.class
+com\company\buildanalyzer\api\controller\BuildAnalysisController.class
+com\company\buildanalyzer\api\dto\response\AnalyzeBuildResponse.class
+com\company\buildanalyzer\BuildAnalyzerApplication.class
+com\company\buildanalyzer\api\error\GlobalExceptionHandler.class
+com\company\buildanalyzer\domain\model\BuildAnalysisContext.class
+com\company\buildanalyzer\application\classifier\ErrorClassifier$Rule.class
+com\company\buildanalyzer\api\mapper\BuildAnalysisResponseMapper.class
+com\company\buildanalyzer\application\context\BuildContextBuilder.class
+com\company\buildanalyzer\infrastructure\jenkins\JenkinsHttpClient.class
+com\company\buildanalyzer\infrastructure\jenkins\JenkinsProperties.class
+com\company\buildanalyzer\domain\model\ErrorCategory.class

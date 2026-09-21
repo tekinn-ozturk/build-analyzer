@@ -1,0 +1,5 @@
+com\company\buildanalyzer\application\classifier\ErrorClassifierTest.class
+com\company\buildanalyzer\api\mapper\BuildAnalysisResponseMapperTest.class
+com\company\buildanalyzer\application\usecase\AnalyzeBuildServiceTest.class
+com\company\buildanalyzer\api\controller\BuildAnalysisControllerTest.class
+com\company\buildanalyzer\application\context\BuildContextBuilderTest.class
