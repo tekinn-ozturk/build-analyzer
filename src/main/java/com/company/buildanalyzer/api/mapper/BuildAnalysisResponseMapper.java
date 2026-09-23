@@ -11,14 +11,15 @@ import org.springframework.stereotype.Component;
 @Component
 public class BuildAnalysisResponseMapper {
 
-    public AnalyzeBuildResponse toResponse(BuildAnalysisContext context) {
+    public AnalyzeBuildResponse toResponse(BuildAnalysisContext context, String generatedPrompt) {
         return new AnalyzeBuildResponse(
                 context.buildStatus(),
                 context.failedScenario(),
                 context.exceptionType(),
                 context.errorCategory() == null ? null : context.errorCategory().name(),
                 context.stackTrace(),
-                context.last500Lines()
+                context.last500Lines(),
+                generatedPrompt
         );
     }
 }

@@ -15,3 +15,4 @@ com\company\buildanalyzer\application\context\BuildContextBuilder.class
 com\company\buildanalyzer\infrastructure\jenkins\JenkinsHttpClient.class
 com\company\buildanalyzer\infrastructure\jenkins\JenkinsProperties.class
 com\company\buildanalyzer\domain\model\ErrorCategory.class
+com\company\buildanalyzer\application\prompt\PromptBuilder.class

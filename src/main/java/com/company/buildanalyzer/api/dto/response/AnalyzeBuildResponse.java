@@ -11,6 +11,7 @@ public record AnalyzeBuildResponse(
         String exceptionType,
         String errorCategory,
         String stackTrace,
-        String last500Lines
+        String last500Lines,
+        String generatedPrompt
 ) {
 }

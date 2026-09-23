@@ -2,4 +2,5 @@ C:\Users\PC\Desktop\build-analyzer\src\test\java\com\company\buildanalyzer\api\c
 C:\Users\PC\Desktop\build-analyzer\src\test\java\com\company\buildanalyzer\api\mapper\BuildAnalysisResponseMapperTest.java
 C:\Users\PC\Desktop\build-analyzer\src\test\java\com\company\buildanalyzer\application\classifier\ErrorClassifierTest.java
 C:\Users\PC\Desktop\build-analyzer\src\test\java\com\company\buildanalyzer\application\context\BuildContextBuilderTest.java
+C:\Users\PC\Desktop\build-analyzer\src\test\java\com\company\buildanalyzer\application\prompt\PromptBuilderTest.java
 C:\Users\PC\Desktop\build-analyzer\src\test\java\com\company\buildanalyzer\application\usecase\AnalyzeBuildServiceTest.java

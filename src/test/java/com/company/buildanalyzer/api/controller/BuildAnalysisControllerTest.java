@@ -1,6 +1,7 @@
 package com.company.buildanalyzer.api.controller;
 
 import com.company.buildanalyzer.api.mapper.BuildAnalysisResponseMapper;
+import com.company.buildanalyzer.application.prompt.PromptBuilder;
 import com.company.buildanalyzer.application.usecase.AnalyzeBuildUseCase;
 import com.company.buildanalyzer.domain.model.BuildAnalysisContext;
 import com.company.buildanalyzer.domain.model.ErrorCategory;
@@ -20,7 +21,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(BuildAnalysisController.class)
-@Import(BuildAnalysisResponseMapper.class)
+@Import({BuildAnalysisResponseMapper.class, PromptBuilder.class})
 class BuildAnalysisControllerTest {
 
     @Autowired
@@ -53,6 +54,8 @@ class BuildAnalysisControllerTest {
                 .andExpect(jsonPath("$.errorCategory").value("SELENIUM"))
                 .andExpect(jsonPath("$.stackTrace").exists())
                 .andExpect(jsonPath("$.last500Lines").exists())
+                .andExpect(jsonPath("$.generatedPrompt").exists())
+                .andExpect(jsonPath("$.generatedPrompt").value(org.hamcrest.Matchers.containsString("Root Cause Analysis")))
                 .andExpect(jsonPath("$.consoleLog").doesNotExist());
     }
 

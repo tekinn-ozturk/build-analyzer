@@ -22,7 +22,7 @@ class BuildAnalysisResponseMapperTest {
                 "line 1\nline 2"
         );
 
-        AnalyzeBuildResponse response = mapper.toResponse(context);
+        AnalyzeBuildResponse response = mapper.toResponse(context, "GENERATED_PROMPT");
 
         assertThat(response.buildStatus()).isEqualTo("FAILURE");
         assertThat(response.failedScenario()).isEqualTo("Login with invalid credentials");
@@ -30,5 +30,6 @@ class BuildAnalysisResponseMapperTest {
         assertThat(response.errorCategory()).isEqualTo("SELENIUM");
         assertThat(response.stackTrace()).isEqualTo("org.openqa.selenium.SessionNotCreatedException: session not created");
         assertThat(response.last500Lines()).isEqualTo("line 1\nline 2");
+        assertThat(response.generatedPrompt()).isEqualTo("GENERATED_PROMPT");
     }
 }
