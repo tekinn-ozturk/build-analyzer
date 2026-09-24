@@ -8,36 +8,42 @@ import org.springframework.stereotype.Service;
  * will be sent to the LLM. It only assembles text — it performs no extraction,
  * classification or model call. Sections whose value is {@code null}/blank are
  * omitted so the model is never fed empty headings.
+ *
+ * <p>The prompt is written in Turkish (the app serves Turkish users) and
+ * explicitly asks the model to answer in Turkish. Raw values such as build
+ * status, error category and exception names are passed through unchanged.
  */
 @Service
 public class PromptBuilder {
 
     private static final String PERSONA = """
-            You are a professional QA Automation Engineer and CI/CD expert.
-            Analyze the following Jenkins pipeline build failure and produce a precise, \
-            actionable diagnosis based only on the evidence provided.""";
+            Sen profesyonel bir QA Otomasyon Mühendisi ve CI/CD uzmanısın.
+            Aşağıdaki Jenkins pipeline build hatasını analiz et ve yalnızca sağlanan \
+            kanıtlara dayanarak net ve uygulanabilir bir teşhis üret.
+            Yanıtını tamamen Türkçe yaz; exception, sınıf, metot, dosya adları ve \
+            komutlar gibi teknik ifadeleri orijinal halleriyle koru.""";
 
     private static final String TASKS = """
-            Based on the information above, respond with the following sections:
+            Yukarıdaki bilgilere dayanarak yanıtını aşağıdaki başlıklar altında ver:
 
-            1. Root Cause Analysis
-            2. Technical Explanation
-            3. QA Recommendations
-            4. Developer Recommendations
-            5. Confidence Level (Low / Medium / High)""";
+            1. Kök Neden Analizi
+            2. Teknik Açıklama
+            3. QA Önerileri
+            4. Geliştirici Önerileri
+            5. Güven Seviyesi (Düşük / Orta / Yüksek)""";
 
     public String build(BuildAnalysisContext context) {
         StringBuilder prompt = new StringBuilder();
         prompt.append(PERSONA).append("\n\n");
 
         // Ordered as requested; each section is skipped when its value is absent.
-        appendSection(prompt, "Build Status", context.buildStatus());
-        appendSection(prompt, "Failed Scenario", context.failedScenario());
-        appendSection(prompt, "Error Category",
+        appendSection(prompt, "Build Durumu", context.buildStatus());
+        appendSection(prompt, "Başarısız Senaryo", context.failedScenario());
+        appendSection(prompt, "Hata Kategorisi",
                 context.errorCategory() == null ? null : context.errorCategory().name());
-        appendSection(prompt, "Exception Type", context.exceptionType());
+        appendSection(prompt, "Exception Tipi", context.exceptionType());
         appendSection(prompt, "Stack Trace", context.stackTrace());
-        appendSection(prompt, "Last 500 Log Lines", context.last500Lines());
+        appendSection(prompt, "Son 500 Log Satırı", context.last500Lines());
 
         prompt.append(TASKS);
         return prompt.toString();

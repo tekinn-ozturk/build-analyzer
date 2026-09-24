@@ -23,22 +23,22 @@ class PromptBuilderTest {
 
         String prompt = promptBuilder.build(context);
 
-        // persona
-        assertThat(prompt).contains("QA Automation Engineer").contains("CI/CD");
+        // persona + Turkish answer instruction
+        assertThat(prompt).contains("QA Otomasyon Mühendisi").contains("CI/CD").contains("Türkçe");
         // sections with values
-        assertThat(prompt).contains("Build Status:\nFAILURE");
-        assertThat(prompt).contains("Failed Scenario:\nOpen Google");
-        assertThat(prompt).contains("Error Category:\nSELENIUM");
-        assertThat(prompt).contains("Exception Type:\norg.openqa.selenium.NoSuchElementException");
+        assertThat(prompt).contains("Build Durumu:\nFAILURE");
+        assertThat(prompt).contains("Başarısız Senaryo:\nOpen Google");
+        assertThat(prompt).contains("Hata Kategorisi:\nSELENIUM");
+        assertThat(prompt).contains("Exception Tipi:\norg.openqa.selenium.NoSuchElementException");
         assertThat(prompt).contains("Stack Trace:");
-        assertThat(prompt).contains("Last 500 Log Lines:");
+        assertThat(prompt).contains("Son 500 Log Satırı:");
         // task list
         assertThat(prompt)
-                .contains("Root Cause Analysis")
-                .contains("Technical Explanation")
-                .contains("QA Recommendations")
-                .contains("Developer Recommendations")
-                .contains("Confidence Level (Low / Medium / High)");
+                .contains("Kök Neden Analizi")
+                .contains("Teknik Açıklama")
+                .contains("QA Önerileri")
+                .contains("Geliştirici Önerileri")
+                .contains("Güven Seviyesi (Düşük / Orta / Yüksek)");
     }
 
     @Test
@@ -54,13 +54,13 @@ class PromptBuilderTest {
 
         String prompt = promptBuilder.build(context);
 
-        assertThat(prompt).contains("Build Status:\nFAILURE");
-        assertThat(prompt).contains("Error Category:\nMAVEN");
-        assertThat(prompt).doesNotContain("Failed Scenario:");
-        assertThat(prompt).doesNotContain("Exception Type:");
+        assertThat(prompt).contains("Build Durumu:\nFAILURE");
+        assertThat(prompt).contains("Hata Kategorisi:\nMAVEN");
+        assertThat(prompt).doesNotContain("Başarısız Senaryo:");
+        assertThat(prompt).doesNotContain("Exception Tipi:");
         assertThat(prompt).doesNotContain("Stack Trace:");
-        assertThat(prompt).doesNotContain("Last 500 Log Lines:");
+        assertThat(prompt).doesNotContain("Son 500 Log Satırı:");
         // tasks are always present
-        assertThat(prompt).contains("Root Cause Analysis");
+        assertThat(prompt).contains("Kök Neden Analizi");
     }
 }

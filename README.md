@@ -46,7 +46,7 @@ Response (current shape):
   "errorCategory": "SELENIUM",
   "stackTrace": "...",
   "last500Lines": "...",
-  "generatedPrompt": "You are a professional QA Automation Engineer ..."
+  "generatedPrompt": "Sen profesyonel bir QA Otomasyon Mühendisi ve CI/CD uzmanısın. ..."
 }
 ```
 
@@ -77,7 +77,7 @@ Base package: `com.company.buildanalyzer`
 - `port/out/BuildSourcePort` — outbound port: `String fetchConsoleLog(String jobName, int buildNumber)`. The core's only view of the CI source.
 - `context/BuildContextBuilder` (@Service) — string/regex extraction of buildStatus, failedScenario, exceptionType, stackTrace, last500Lines from the raw log; injects `ErrorClassifier` to set errorCategory. Best-effort — missing fields are null. Blank/null log → all-null context with status/category UNKNOWN.
 - `classifier/ErrorClassifier` (@Service) — **rule-list based**, no if-else chain. An ordered `List<Rule>` of `{ErrorCategory, compiled keyword Pattern}`; `classify(rawLog, exceptionType)` returns the first matching rule's category, else UNKNOWN. Order = priority: specific signals (Selenium exceptions, INFRA connection errors, JENKINS agent, specific Maven dependency errors, Cucumber) are checked before the generic `BUILD FAILURE` (which almost every failed build prints).
-- `prompt/PromptBuilder` (@Service) — turns a `BuildAnalysisContext` into the LLM prompt String. Persona = professional QA Automation Engineer + CI/CD expert. Sections in this order — Build Status, Failed Scenario, Error Category, Exception Type, Stack Trace, Last 500 Log Lines — each skipped when null/blank via one `appendSection(label, value)` helper. Ends with a task list: Root Cause Analysis, Technical Explanation, QA Recommendations, Developer Recommendations, Confidence Level (Low/Medium/High). **No LLM call** — text only.
+- `prompt/PromptBuilder` (@Service) — turns a `BuildAnalysisContext` into the LLM prompt String. **The prompt is in Turkish** (the app serves Turkish users) and tells the model to answer in Turkish while keeping technical identifiers (exception/class/method names, commands) as-is. Persona = profesyonel QA Otomasyon Mühendisi + CI/CD uzmanı. Sections in this order — Build Durumu, Başarısız Senaryo, Hata Kategorisi, Exception Tipi, Stack Trace, Son 500 Log Satırı — each skipped when null/blank via one `appendSection(label, value)` helper. Raw values (e.g. `FAILURE`, `SELENIUM`) are passed through untranslated. Ends with a task list: Kök Neden Analizi, Teknik Açıklama, QA Önerileri, Geliştirici Önerileri, Güven Seviyesi (Düşük / Orta / Yüksek). **No LLM call** — text only.
 
 ### domain (pure Java — NO Spring, no framework imports)
 - `model/BuildAnalysisContext` — record: buildStatus, failedScenario, exceptionType, `ErrorCategory errorCategory`, stackTrace, last500Lines. This is the payload destined for the LLM.
@@ -110,5 +110,5 @@ Base package: `com.company.buildanalyzer`
 
 ## Status & roadmap
 - **Done:** Jenkins fetch (Basic auth) → context extraction → error classification → prompt generation, all exposed via the endpoint. 25 tests pass.
-- **Next (main):** LLM integration — add `application/port/out/LlmPort`, an infrastructure adapter for Ollama + Qwen3 4B (provider-swappable via config), send it `generatedPrompt`, parse the answer into summary / rootCause / recommendation (+ confidence).
+- **Next (main):** LLM integration — add `application/port/out/LlmPort`, an infrastructure adapter for Ollama + Qwen3 4B (provider-swappable via config), send it `generatedPrompt`, parse the answer into summary / rootCause / recommendation (+ confidence). Note: the model answers in Turkish, so the parser must match the Turkish headings (e.g. "Kök Neden Analizi") and confidence values (Düşük / Orta / Yüksek).
 - **Open side-tasks:** add a `.gitignore` (exclude `target/`, IDE files, any secrets) — there is none yet; optionally drop `last500Lines` from the HTTP response and send it only to the LLM (it bloats replies).

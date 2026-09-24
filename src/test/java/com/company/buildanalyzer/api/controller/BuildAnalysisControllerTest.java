@@ -55,7 +55,7 @@ class BuildAnalysisControllerTest {
                 .andExpect(jsonPath("$.stackTrace").exists())
                 .andExpect(jsonPath("$.last500Lines").exists())
                 .andExpect(jsonPath("$.generatedPrompt").exists())
-                .andExpect(jsonPath("$.generatedPrompt").value(org.hamcrest.Matchers.containsString("Root Cause Analysis")))
+                .andExpect(jsonPath("$.generatedPrompt").value(org.hamcrest.Matchers.containsString("Kök Neden Analizi")))
                 .andExpect(jsonPath("$.consoleLog").doesNotExist());
     }
 
