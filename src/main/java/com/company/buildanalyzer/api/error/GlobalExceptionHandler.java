@@ -1,5 +1,7 @@
 package com.company.buildanalyzer.api.error;
 
+import com.company.buildanalyzer.application.port.out.LlmAnalysisException;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -10,6 +12,7 @@ import org.springframework.web.client.RestClientResponseException;
 
 import java.util.Map;
 
+@Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
@@ -35,5 +38,13 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, String>> handleJenkinsUnreachable(ResourceAccessException ex) {
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                 .body(Map.of("error", "Jenkins is unreachable: " + ex.getMessage()));
+    }
+
+    /** The LLM provider was unreachable, timed out, rejected the request or returned no answer. */
+    @ExceptionHandler(LlmAnalysisException.class)
+    public ResponseEntity<Map<String, String>> handleLlmFailure(LlmAnalysisException ex) {
+        log.warn("AI analysis failed: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(Map.of("error", "AI analysis failed: " + ex.getMessage()));
     }
 }

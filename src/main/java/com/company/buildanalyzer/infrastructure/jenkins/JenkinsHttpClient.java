@@ -16,6 +16,7 @@ import org.springframework.web.client.RestClient;
 public class JenkinsHttpClient {
 
     private final RestClient restClient;
+    private final ConsoleLogDecoder logDecoder;
 
     public JenkinsHttpClient(JenkinsProperties properties) {
         RestClient.Builder builder = RestClient.builder()
@@ -24,24 +25,34 @@ public class JenkinsHttpClient {
         // Send HTTP Basic auth (username + API token) only when configured;
         // otherwise fall back to anonymous access.
         if (StringUtils.hasText(properties.getUsername())) {
+            if (!StringUtils.hasText(properties.getApiToken())) {
+                log.warn("JENKINS_USERNAME is set but JENKINS_API_TOKEN is empty; Jenkins will likely answer 401");
+            }
             builder.requestInterceptor(new BasicAuthenticationInterceptor(
-                    properties.getUsername(), properties.getApiToken()));
+                    properties.getUsername(), properties.getApiToken() == null ? "" : properties.getApiToken()));
             log.info("Jenkins client configured with Basic authentication for user '{}'", properties.getUsername());
         } else {
             log.info("Jenkins client configured for anonymous access (no username set)");
         }
 
         this.restClient = builder.build();
+        this.logDecoder = new ConsoleLogDecoder(properties.getLogCharset(), properties.getLogFallbackCharset());
+        log.info("Jenkins console log charset: {} (fallback: {})",
+                properties.getLogCharset(), properties.getLogFallbackCharset());
     }
 
     /**
      * Calls {@code /job/{jobName}/{buildNumber}/consoleText} and returns the body.
+     * The body is read as raw bytes and decoded by {@link ConsoleLogDecoder}, not
+     * by the response's Content-Type charset, which Jenkins does not reliably set
+     * to match what the build process actually wrote.
      */
     public String getConsoleText(String jobName, int buildNumber) {
         log.debug("Fetching Jenkins console log: job={}, build={}", jobName, buildNumber);
-        return restClient.get()
+        byte[] body = restClient.get()
                 .uri("/job/{jobName}/{buildNumber}/consoleText", jobName, buildNumber)
                 .retrieve()
-                .body(String.class);
+                .body(byte[].class);
+        return logDecoder.decode(body);
     }
 }

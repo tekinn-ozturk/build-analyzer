@@ -16,6 +16,10 @@ import java.util.regex.Pattern;
  * priority: specific/root-cause signals (a Selenium exception, an infra error)
  * are checked before generic ones (a bare "BUILD FAILURE"), because almost every
  * failed build ends with "BUILD FAILURE".
+ * <p>
+ * Only meant for non-successful builds: the caller ({@code BuildContextBuilder})
+ * checks the build status first and never classifies a SUCCESS build, whose log
+ * may still contain harmless warnings that match these keywords.
  */
 @Service
 public class ErrorClassifier {
