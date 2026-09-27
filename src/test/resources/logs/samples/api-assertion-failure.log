@@ -1,0 +1,45 @@
+Started by timer
+[Pipeline] Start of Pipeline
+[Pipeline] node
+Running on agent-2 in /home/jenkins/workspace/Order-API-Regression
+[Pipeline] stage
+[Pipeline] { (Test)
+[Pipeline] sh
++ mvn -B test -Dcucumber.filter.tags=@regression
+[INFO] Scanning for projects...
+[INFO] Building order-api-tests 2.4.0
+[INFO] --- maven-surefire-plugin:3.2.5:test (default-test) @ order-api-tests ---
+[INFO] Running com.acme.orders.RunCucumberTest
+
+@regression
+Scenario: Create order with valid basket    # features/orders.feature:12
+  Given a basket with 2 items               # com.acme.orders.steps.OrderSteps.aBasketWith(int)
+  When the client posts the basket to /api/v1/orders # com.acme.orders.steps.OrderSteps.postBasket(java.lang.String)
+  Then the response status should be 201    # com.acme.orders.steps.OrderSteps.statusShouldBe(int)
+      java.lang.AssertionError: 1 expectation failed.
+      Expected status code <201> but was <500>.
+
+      	at java.base/jdk.internal.reflect.DirectConstructorHandleAccessor.newInstance(DirectConstructorHandleAccessor.java:62)
+      	at io.restassured.internal.ValidatableResponseOptionsImpl.statusCode(ValidatableResponseOptionsImpl.java:89)
+      	at com.acme.orders.steps.OrderSteps.statusShouldBe(OrderSteps.java:64)
+      	at ✽.the response status should be 201(file:///home/jenkins/workspace/Order-API-Regression/features/orders.feature:15)
+
+  And the order id should be returned       # com.acme.orders.steps.OrderSteps.orderIdReturned()
+
+Response body:
+{"timestamp":"2026-09-27T07:02:11Z","status":500,"error":"Internal Server Error","message":"could not execute statement; SQL [n/a]; constraint [fk_order_customer]","path":"/api/v1/orders"}
+
+Failed scenarios:
+features/orders.feature:12 # Create order with valid basket
+
+1 Scenarios (1 failed)
+4 Steps (1 failed, 1 skipped, 2 passed)
+
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 3.87 s <<< FAILURE!
+[INFO] BUILD FAILURE
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test (default-test) on project order-api-tests: There are test failures.
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] End of Pipeline
+ERROR: script returned exit code 1
+Finished: FAILURE

@@ -1,0 +1,30 @@
+Started by user qa-lead
+[Pipeline] Start of Pipeline
+[Pipeline] node
+Running on Jenkins in C:\ProgramData\Jenkins\.jenkins\workspace\Web-Checkout-UI
+[Pipeline] stage
+[Pipeline] { (UI Tests)
+[Pipeline] bat
+[INFO] Running runners.TestRunner
+
+@checkout
+Scenario: Pay with saved card     # src/test/resources/features/Checkout.feature:9
+  * Sepete git.                   # stepdefinitions.CheckoutSteps.openCart()
+  * Ödeme butonuna tıkla.         # stepdefinitions.CheckoutSteps.clickPay()
+      org.openqa.selenium.TimeoutException: Expected condition failed: waiting for element to be clickable: By.id: pay-now-btn (tried for 10 second(s) with 500 milliseconds interval)
+      Build info: version: '4.34.0', revision: '707dcb4246*'
+      System info: os.name: 'Windows 10', os.arch: 'amd64', os.version: '10.0', java.version: '21'
+      Driver info: org.openqa.selenium.chrome.ChromeDriver
+      Session ID: 5f1e7c0d9a2b4c1e8f3a6b7c8d9e0f1a
+      	at org.openqa.selenium.support.ui.WebDriverWait.timeoutException(WebDriverWait.java:84)
+      	at org.openqa.selenium.support.ui.FluentWait.until(FluentWait.java:228)
+      	at pages.CheckoutPage.clickPayNow(CheckoutPage.java:41)
+      	at stepdefinitions.CheckoutSteps.clickPay(CheckoutSteps.java:33)
+      	at ✽.Ödeme butonuna tıkla.(file:///C:/ProgramData/Jenkins/.jenkins/workspace/Web-Checkout-UI/src/test/resources/features/Checkout.feature:11)
+
+[ERROR] Tests run: 1, Failures: 0, Errors: 1, Skipped: 0
+[INFO] BUILD FAILURE
+[Pipeline] }
+[Pipeline] End of Pipeline
+ERROR: script returned exit code 1
+Finished: FAILURE

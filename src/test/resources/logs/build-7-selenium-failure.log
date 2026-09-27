@@ -1,0 +1,200 @@
+Started by user Tekin Öztürk
+Obtained Jenkinsfile from git https://github.com/tekinn-ozturk/Mini-UI-Automation-Project.git
+[Pipeline] Start of Pipeline
+[Pipeline] node
+Running on Jenkins in C:\ProgramData\Jenkins\.jenkins\workspace\Mini-UI-Automation
+[Pipeline] {
+[Pipeline] stage
+[Pipeline] { (Declarative: Checkout SCM)
+[Pipeline] checkout
+Selected Git installation does not exist. Using Default
+The recommended git tool is: NONE
+No credentials specified
+ > git.exe rev-parse --resolve-git-dir C:\ProgramData\Jenkins\.jenkins\workspace\Mini-UI-Automation\.git # timeout=10
+Fetching changes from the remote Git repository
+ > git.exe config remote.origin.url https://github.com/tekinn-ozturk/Mini-UI-Automation-Project.git # timeout=10
+Fetching upstream changes from https://github.com/tekinn-ozturk/Mini-UI-Automation-Project.git
+ > git.exe --version # timeout=10
+ > git --version # 'git version 2.55.0.windows.4'
+ > git.exe fetch --tags --force --progress -- https://github.com/tekinn-ozturk/Mini-UI-Automation-Project.git +refs/heads/*:refs/remotes/origin/* # timeout=10
+ > git.exe rev-parse "refs/remotes/origin/master^{commit}" # timeout=10
+Checking out Revision a7549eec35ccf2bac329d6196bbe4d23c0a89da1 (refs/remotes/origin/master)
+ > git.exe config core.sparsecheckout # timeout=10
+ > git.exe checkout -f a7549eec35ccf2bac329d6196bbe4d23c0a89da1 # timeout=10
+Commit message: "scenerio update"
+ > git.exe rev-list --no-walk 257859a23a17828d175fa7058a3ecb3621f4ea4d # timeout=10
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] withEnv
+[Pipeline] {
+[Pipeline] stage
+[Pipeline] { (Build and Test)
+[Pipeline] bat
+
+C:\ProgramData\Jenkins\.jenkins\workspace\Mini-UI-Automation>mvn clean test 
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] ------------------< com.tekin:selenium-cucumber-demo >------------------
+[INFO] Building selenium-cucumber-demo 1.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+Downloading from central: https://repo.maven.apache.org/maven2/io/cucumber/messages/maven-metadata.xml
+Progress (1): 3.6 kB
+                    
+Downloaded from central: https://repo.maven.apache.org/maven2/io/cucumber/messages/maven-metadata.xml (3.6 kB at 6.7 kB/s)
+Downloading from central: https://repo.maven.apache.org/maven2/io/cucumber/query/maven-metadata.xml
+Progress (1): 1.3 kB
+                    
+Downloaded from central: https://repo.maven.apache.org/maven2/io/cucumber/query/maven-metadata.xml (1.3 kB at 12 kB/s)
+[INFO] 
+[INFO] --- clean:3.2.0:clean (default-clean) @ selenium-cucumber-demo ---
+[INFO] Deleting C:\ProgramData\Jenkins\.jenkins\workspace\Mini-UI-Automation\target
+[INFO] 
+[INFO] --- resources:3.4.0:resources (default-resources) @ selenium-cucumber-demo ---
+[INFO] skip non existing resourceDirectory C:\ProgramData\Jenkins\.jenkins\workspace\Mini-UI-Automation\src\main\resources
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ selenium-cucumber-demo ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 1 source file with javac [debug target 21] to target\classes
+[WARNING] location of system modules is not set in conjunction with -source 21
+  not setting the location of system modules may lead to class files that cannot run on JDK 21
+    --release 21 is recommended instead of -source 21 -target 21 because it sets the location of system modules automatically
+[INFO] 
+[INFO] --- resources:3.4.0:testResources (default-testResources) @ selenium-cucumber-demo ---
+[INFO] Copying 1 resource from src\test\resources to target\test-classes
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ selenium-cucumber-demo ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 2 source files with javac [debug target 21] to target\test-classes
+[WARNING] location of system modules is not set in conjunction with -source 21
+  not setting the location of system modules may lead to class files that cannot run on JDK 21
+    --release 21 is recommended instead of -source 21 -target 21 because it sets the location of system modules automatically
+[INFO] 
+[INFO] --- surefire:3.5.3:test (default-test) @ selenium-cucumber-demo ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junit4.JUnit4Provider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running runners.TestRunner
+
+@exampleScenario
+Scenario: Open Google     # src/test/resources/features/Example.feature:4
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+Eyl 21, 2026 10:49:50 ÖS org.openqa.selenium.devtools.CdpVersionFinder findNearestMatch
+WARNING: Unable to find CDP implementation matching 153
+Eyl 21, 2026 10:49:50 ÖS org.openqa.selenium.chromium.ChromiumDriver lambda$new$4
+WARNING: Unable to find version of CDP to use for 153.0.8010.48. You may need to include a dependency on a specific version of the CDP using something similar to `org.seleniumhq.selenium:selenium-devtools-v86:4.34.0` where the version ("v86") matches the version of the chromium-based browser you're using and the version number of the artifact is the same as Selenium's.
+  * Google'a git.         # stepdefinitions.ExampleSteps.userOpensGoogle()
+  * Arama kutusuna tıkla. # stepdefinitions.ExampleSteps.clickSearchBox()
+      org.openqa.selenium.NoSuchElementException: no such element: Unable to locate element: {"method":"css selector","selector":"*[name='qqqqqqqq']"}
+        (Session info: chrome=153.0.8010.48)
+      For documentation on this error, please visit: https://www.selenium.dev/documentation/webdriver/troubleshooting/errors#no-such-element-exception
+      Build info: version: '4.34.0', revision: '707dcb4246*'
+      System info: os.name: 'Windows 10', os.arch: 'amd64', os.version: '10.0', java.version: '23'
+      Driver info: org.openqa.selenium.chrome.ChromeDriver
+      Command: [b9cc324322adeb37cb93984b824b8efd, findElement {using=name, value=qqqqqqqq}]
+      Capabilities {acceptInsecureCerts: false, browserName: chrome, browserVersion: 153.0.8010.48, chrome: {chromedriverVersion: 153.0.8010.52 (78e5e45d4bb4..., userDataDir: C:\Windows\SystemTemp\scope...}, fedcm:accounts: true, goog:chromeOptions: {debuggerAddress: localhost:60589}, goog:processID: 18256, networkConnectionEnabled: false, pageLoadStrategy: normal, platformName: windows, proxy: Proxy(), se:cdp: ws://localhost:60589/devtoo..., se:cdpVersion: 153.0.8010.48, setWindowRect: true, strictFileInteractability: false, timeouts: {implicit: 0, pageLoad: 300000, script: 30000}, unhandledPromptBehavior: dismiss and notify, webauthn:extension:cmtgKey: true, webauthn:extension:credBlob: true, webauthn:extension:largeBlob: true, webauthn:extension:minPinLength: true, webauthn:extension:prf: true, webauthn:virtualAuthenticators: true}
+      Session ID: b9cc324322adeb37cb93984b824b8efd
+      	at java.base/jdk.internal.reflect.DirectConstructorHandleAccessor.newInstance(DirectConstructorHandleAccessor.java:62)
+      	at java.base/java.lang.reflect.Constructor.newInstanceWithCaller(Constructor.java:501)
+      	at java.base/java.lang.reflect.Constructor.newInstance(Constructor.java:485)
+      	at org.openqa.selenium.remote.ErrorCodec.decode(ErrorCodec.java:167)
+      	at org.openqa.selenium.remote.codec.w3c.W3CHttpResponseCodec.decode(W3CHttpResponseCodec.java:138)
+      	at org.openqa.selenium.remote.codec.w3c.W3CHttpResponseCodec.decode(W3CHttpResponseCodec.java:50)
+      	at org.openqa.selenium.remote.HttpCommandExecutor.execute(HttpCommandExecutor.java:215)
+      	at org.openqa.selenium.remote.service.DriverCommandExecutor.invokeExecute(DriverCommandExecutor.java:216)
+      	at org.openqa.selenium.remote.service.DriverCommandExecutor.execute(DriverCommandExecutor.java:174)
+      	at org.openqa.selenium.remote.RemoteWebDriver.execute(RemoteWebDriver.java:544)
+      	at org.openqa.selenium.remote.ElementLocation$ElementFinder$2.findElement(ElementLocation.java:165)
+      	at org.openqa.selenium.remote.ElementLocation.findElement(ElementLocation.java:66)
+      	at org.openqa.selenium.remote.RemoteWebDriver.findElement(RemoteWebDriver.java:367)
+      	at org.openqa.selenium.remote.RemoteWebDriver.findElement(RemoteWebDriver.java:361)
+      	at stepdefinitions.ExampleSteps.clickSearchBox(ExampleSteps.java:28)
+      	at ?.Arama kutusuna tıkla.(file:///C:/ProgramData/Jenkins/.jenkins/workspace/Mini-UI-Automation/src/test/resources/features/Example.feature:6)
+[ERROR] Tests run: 1, Failures: 0, Errors: 1, Skipped: 0, Time elapsed: 5.393 s <<< FAILURE! -- in runners.TestRunner
+[ERROR] Example.Open Google -- Time elapsed: 4.573 s <<< ERROR!
+org.openqa.selenium.NoSuchElementException: 
+no such element: Unable to locate element: {"method":"css selector","selector":"*[name='qqqqqqqq']"}
+  (Session info: chrome=153.0.8010.48)
+For documentation on this error, please visit: https://www.selenium.dev/documentation/webdriver/troubleshooting/errors#no-such-element-exception
+Build info: version: '4.34.0', revision: '707dcb4246*'
+System info: os.name: 'Windows 10', os.arch: 'amd64', os.version: '10.0', java.version: '23'
+Driver info: org.openqa.selenium.chrome.ChromeDriver
+Command: [b9cc324322adeb37cb93984b824b8efd, findElement {using=name, value=qqqqqqqq}]
+Capabilities {acceptInsecureCerts: false, browserName: chrome, browserVersion: 153.0.8010.48, chrome: {chromedriverVersion: 153.0.8010.52 (78e5e45d4bb4..., userDataDir: C:\Windows\SystemTemp\scope...}, fedcm:accounts: true, goog:chromeOptions: {debuggerAddress: localhost:60589}, goog:processID: 18256, networkConnectionEnabled: false, pageLoadStrategy: normal, platformName: windows, proxy: Proxy(), se:cdp: ws://localhost:60589/devtoo..., se:cdpVersion: 153.0.8010.48, setWindowRect: true, strictFileInteractability: false, timeouts: {implicit: 0, pageLoad: 300000, script: 30000}, unhandledPromptBehavior: dismiss and notify, webauthn:extension:cmtgKey: true, webauthn:extension:credBlob: true, webauthn:extension:largeBlob: true, webauthn:extension:minPinLength: true, webauthn:extension:prf: true, webauthn:virtualAuthenticators: true}
+Session ID: b9cc324322adeb37cb93984b824b8efd
+	at java.base/jdk.internal.reflect.DirectConstructorHandleAccessor.newInstance(DirectConstructorHandleAccessor.java:62)
+	at java.base/java.lang.reflect.Constructor.newInstanceWithCaller(Constructor.java:501)
+	at java.base/java.lang.reflect.Constructor.newInstance(Constructor.java:485)
+	at org.openqa.selenium.remote.ErrorCodec.decode(ErrorCodec.java:167)
+	at org.openqa.selenium.remote.codec.w3c.W3CHttpResponseCodec.decode(W3CHttpResponseCodec.java:138)
+	at org.openqa.selenium.remote.codec.w3c.W3CHttpResponseCodec.decode(W3CHttpResponseCodec.java:50)
+	at org.openqa.selenium.remote.HttpCommandExecutor.execute(HttpCommandExecutor.java:215)
+	at org.openqa.selenium.remote.service.DriverCommandExecutor.invokeExecute(DriverCommandExecutor.java:216)
+	at org.openqa.selenium.remote.service.DriverCommandExecutor.execute(DriverCommandExecutor.java:174)
+	at org.openqa.selenium.remote.RemoteWebDriver.execute(RemoteWebDriver.java:544)
+	at org.openqa.selenium.remote.ElementLocation$ElementFinder$2.findElement(ElementLocation.java:165)
+	at org.openqa.selenium.remote.ElementLocation.findElement(ElementLocation.java:66)
+	at org.openqa.selenium.remote.RemoteWebDriver.findElement(RemoteWebDriver.java:367)
+	at org.openqa.selenium.remote.RemoteWebDriver.findElement(RemoteWebDriver.java:361)
+	at stepdefinitions.ExampleSteps.clickSearchBox(ExampleSteps.java:28)
+	at ?.Arama kutusuna tıkla.(file:///C:/ProgramData/Jenkins/.jenkins/workspace/Mini-UI-Automation/src/test/resources/features/Example.feature:6)
+
+[INFO] 
+[INFO] Results:
+[INFO] 
+[ERROR] Errors: 
+[ERROR]   no such element: Unable to locate element: {"method":"css selector","selector":"*[name='qqqqqqqq']"}
+  (Session info: chrome=153.0.8010.48)
+For documentation on this error, please visit: https://www.selenium.dev/documentation/webdriver/troubleshooting/errors#no-such-element-exception
+Build info: version: '4.34.0', revision: '707dcb4246*'
+System info: os.name: 'Windows 10', os.arch: 'amd64', os.version: '10.0', java.version: '23'
+Driver info: org.openqa.selenium.chrome.ChromeDriver
+Command: [b9cc324322adeb37cb93984b824b8efd, findElement {using=name, value=qqqqqqqq}]
+Capabilities {acceptInsecureCerts: false, browserName: chrome, browserVersion: 153.0.8010.48, chrome: {chromedriverVersion: 153.0.8010.52 (78e5e45d4bb4..., userDataDir: C:\Windows\SystemTemp\scope...}, fedcm:accounts: true, goog:chromeOptions: {debuggerAddress: localhost:60589}, goog:processID: 18256, networkConnectionEnabled: false, pageLoadStrategy: normal, platformName: windows, proxy: Proxy(), se:cdp: ws://localhost:60589/devtoo..., se:cdpVersion: 153.0.8010.48, setWindowRect: true, strictFileInteractability: false, timeouts: {implicit: 0, pageLoad: 300000, script: 30000}, unhandledPromptBehavior: dismiss and notify, webauthn:extension:cmtgKey: true, webauthn:extension:credBlob: true, webauthn:extension:largeBlob: true, webauthn:extension:minPinLength: true, webauthn:extension:prf: true, webauthn:virtualAuthenticators: true}
+Session ID: b9cc324322adeb37cb93984b824b8efd
+[INFO] 
+[ERROR] Tests run: 1, Failures: 0, Errors: 1, Skipped: 0
+[INFO] 
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  19.758 s
+[INFO] Finished at: 2026-09-21T22:49:51+03:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.5.3:test (default-test) on project selenium-cucumber-demo: 
+[ERROR] 
+[ERROR] See C:\ProgramData\Jenkins\.jenkins\workspace\Mini-UI-Automation\target\surefire-reports for the individual test results.
+[ERROR] See dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] stage
+[Pipeline] { (Declarative: Post Actions)
+[Pipeline] cucumber
+[CucumberReport] Using Cucumber Reports version 5.11.0
+[CucumberReport] JSON report directory is ""
+[CucumberReport] Copied 0 properties files from workspace "C:\ProgramData\Jenkins\.jenkins\workspace\Mini-UI-Automation" to reports directory "C:\ProgramData\Jenkins\.jenkins\jobs\Mini-UI-Automation\builds\7\cucumber-html-reports\.cache"
+[CucumberReport] Copied 1 files from workspace "C:\ProgramData\Jenkins\.jenkins\workspace\Mini-UI-Automation" to reports directory "C:\ProgramData\Jenkins\.jenkins\jobs\Mini-UI-Automation\builds\7\cucumber-html-reports\.cache"
+[CucumberReport] Processing 1 json files:
+[CucumberReport] C:\ProgramData\Jenkins\.jenkins\jobs\Mini-UI-Automation\builds\7\cucumber-html-reports\.cache\target\reports\cucumber.json
+[CucumberReport] Found 1 failed steps, while expected at most 0
+[CucumberReport] Build status is changed to UNSTABLE
+[Pipeline] }
+[Pipeline] // stage
+[Pipeline] }
+[Pipeline] // withEnv
+[Pipeline] }
+[Pipeline] // node
+[Pipeline] End of Pipeline
+ERROR: script returned exit code 1
+Finished: FAILURE
