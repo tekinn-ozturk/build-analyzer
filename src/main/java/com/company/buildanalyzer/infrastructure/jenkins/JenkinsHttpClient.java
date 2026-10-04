@@ -43,6 +43,8 @@ public class JenkinsHttpClient {
 
     /**
      * Calls {@code /job/{jobName}/{buildNumber}/consoleText} and returns the body.
+     * {@code jobName} is the Jenkins full name: a job inside folders is written with "/",
+     * e.g. {@code Team/UI-Test} → {@code /job/Team/job/UI-Test/125/consoleText}.
      * The body is read as raw bytes and decoded by {@link ConsoleLogDecoder}, not
      * by the response's Content-Type charset, which Jenkins does not reliably set
      * to match what the build process actually wrote.
@@ -50,7 +52,14 @@ public class JenkinsHttpClient {
     public String getConsoleText(String jobName, int buildNumber) {
         log.debug("Fetching Jenkins console log: job={}, build={}", jobName, buildNumber);
         byte[] body = restClient.get()
-                .uri("/job/{jobName}/{buildNumber}/consoleText", jobName, buildNumber)
+                .uri(uriBuilder -> {
+                    for (String name : jobName.split("/")) {
+                        if (!name.isBlank()) {
+                            uriBuilder.pathSegment("job", name);
+                        }
+                    }
+                    return uriBuilder.pathSegment(String.valueOf(buildNumber), "consoleText").build();
+                })
                 .retrieve()
                 .body(byte[].class);
         return logDecoder.decode(body);

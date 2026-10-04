@@ -1,0 +1,5 @@
+# Maven build output
+target/
+
+# Local Claude Code preview config
+.claude/

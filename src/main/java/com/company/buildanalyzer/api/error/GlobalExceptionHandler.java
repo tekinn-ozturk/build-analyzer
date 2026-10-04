@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
 
@@ -38,6 +39,13 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, String>> handleJenkinsUnreachable(ResourceAccessException ex) {
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                 .body(Map.of("error", "Jenkins is unreachable: " + ex.getMessage()));
+    }
+
+    /** Our own "not found / not allowed" answers, e.g. an analysis the current user may not see (404). */
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<Map<String, String>> handleStatus(ResponseStatusException ex) {
+        return ResponseEntity.status(ex.getStatusCode())
+                .body(Map.of("error", ex.getReason() == null ? ex.getStatusCode().toString() : ex.getReason()));
     }
 
     /** The LLM provider was unreachable, timed out, rejected the request or returned no answer. */

@@ -25,7 +25,8 @@ answered instantly without calling the LLM.
   (JDK `HttpClient` underneath). The provider sits behind the `LlmProvider` port; OpenAI is the only
   implementation today.
 - springdoc-openapi (Swagger UI)
-- No DB, no frontend in v1.
+- **PostgreSQL** (Spring Data JPA, schema by **Flyway**) for the analysis history — one table, see [Database](#database).
+- A small React frontend in `frontend/` (see [Frontend](#frontend)).
 
 ## Running locally
 
@@ -39,11 +40,15 @@ Secrets come **only from environment variables** — never from `application.yml
 | `OPENAI_API_KEY` | **yes** | OpenAI API key. Missing → the app refuses to start (`OPENAI_API_KEY environment variable is not set`). |
 | `JENKINS_USERNAME` | yes for this Jenkins | anonymous access answers 403 |
 | `JENKINS_API_TOKEN` | yes for this Jenkins | Jenkins → user menu → *Security* → *API Token* |
+| `DB_PASSWORD` | **yes** | password of the PostgreSQL user |
+| `DB_URL` | no | default `jdbc:postgresql://localhost:5432/build_analyzer` |
+| `DB_USERNAME` | no | default `build_analyzer_user` |
 
 - **IntelliJ (how the app is normally run):** Run configuration `BuildAnalyzerApplication` →
   *Edit Configurations…* → *Environment variables*:
-  `OPENAI_API_KEY=<key>;JENKINS_USERNAME=<user>;JENKINS_API_TOKEN=<token>` → restart the app
+  `OPENAI_API_KEY=<key>;JENKINS_USERNAME=<user>;JENKINS_API_TOKEN=<token>;DB_PASSWORD=<db password>` → restart the app
   (env is read at startup only).
+- **First start:** Flyway creates the schema; the history starts empty. Nothing has to be set up by hand.
 - **Terminal (PowerShell):**
   ```powershell
   $env:OPENAI_API_KEY = "<key>"
@@ -60,22 +65,84 @@ An OpenAI key is created at https://platform.openai.com/api-keys. Never commit i
 - **Postman:** `POST http://localhost:8090/api/v1/analysis/build`, Body → raw → JSON.
 
 ### Tests
-`mvn test` — **128 unit tests, all green** (+ an opt-in live test over 4 logs, skipped by default). No external service and no API key are needed (OpenAI is
-stubbed with an in-process HTTP server, Jenkins is mocked). After deleting/renaming classes run
-`mvn clean test` so stale `.class` files in `target/` are not picked up.
+`mvn test` — **149 unit tests, all green**, no external service or API key needed (OpenAI is stubbed with an
+in-process HTTP server, Jenkins is mocked, the controller test mocks the repository). Plus two opt-in groups,
+skipped by default:
+- `AnalysisRepositoryTest` (3 tests: stored columns, history list, detail without prompt) runs against the
+  **real local PostgreSQL** when `DB_PASSWORD` is set; every test is rolled back, nothing stays in the database;
+- the live OpenAI test over 4 logs (`-Dopenai.live=true`).
+
+After deleting/renaming classes run `mvn clean test` so stale `.class` files in `target/` are not picked up.
+
+## Database
+
+One table, **`analyses`** — one analysed Jenkins build. Schema by Flyway (`src/main/resources/db/migration`);
+Hibernate only validates it (`ddl-auto: validate`).
+
+- `V1__init_schema.sql` created users / projects / project_members / pipelines / analyses;
+  `V2__drop_projects_and_pipelines.sql` removed everything but `analyses` (V1 product decision: no users,
+  projects or pipelines — the build URL alone identifies an analysis). Never edit an applied migration; add a new one.
+- Columns: Jenkins (`build_url, job_name, job_path, build_number, build_status`), history list
+  (`analysis_status, error_category, exception_type, headline`), result (`error_reason, result_json,
+  relevant_logs, last_200_lines`), LLM (`model, total_tokens, estimated_cost_usd`), `created_at, analyzed_at`.
+- `result_json` (TEXT, Jackson) is the analysis response without the prompt and the logs; the logs have their
+  own columns. **The prompt and the full console log are not stored** (the log stays on Jenkins).
+- `analysis_status`: `COMPLETED` · `SKIPPED` (SUCCESS build, no LLM call) · `UNSTRUCTURED` (model answer not parseable).
+- No authentication: everybody who can reach the app sees the whole history.
+
+## Frontend
+
+`frontend/` — React 19, TypeScript, Vite, MUI, React Router (backend calls with `fetch`). Kept deliberately
+small (lean V1); the long frontend design document is the product vision, not the implemented scope.
+All backend calls are in `src/api/analysisApi.ts`.
+
+```
+cd frontend
+npm install
+npm run dev      # http://localhost:5173 — /api is proxied to the backend on :8090 (no CORS needed)
+npm test         # Vitest: URL parser, response mapping, AnalyzeForm, AiAnalysis render rules
+npm run build    # type check + production bundle in frontend/dist
+```
+
+Flow: `DashboardPage` (URL → `AnalyzeForm` → "Build analiz ediliyor..." → `POST /api/v1/analysis/build`) →
+`AnalysisPage` (`/analyses/:id` → `GET /api/v1/analyses/{id}`, tabs AI Analysis / Relevant Logs) ·
+`HistoryList` (`GET /api/v1/analyses`) on the dashboard and on `/history`.
+
+- **AI Analysis** = Hata Sebebi → where it failed → Çözüm Önerileri.
+- **The only render rule for "where" is `testContext`** (`types/analysis.ts`): not null → IDE-like view
+  (`TestContextView`: feature file, scenario, failed step and its line); null → plain error summary card
+  (Maven / Jenkins / pipeline / infrastructure failures). The frontend knows no test framework; every
+  `testContext` field is optional. The backend sets it when the log shows a failing scenario or step.
+- The URL parser (`utils/jenkinsUrl.ts`) supports nested folders: `/job/Team/job/UI-Test/125/` → `Team/UI-Test`.
 
 ## API
 
 `POST /api/v1/analysis/build`
 
 ```json
-{ "jobName": "Mini-UI-Automation", "buildNumber": 7 }
+{ "buildUrl": "http://localhost:8080/job/Mini-UI-Automation/7/" }
 ```
-`jobName` must not be blank, `buildNumber` must be a positive integer (Bean Validation → 400).
+`buildUrl` is parsed by `domain/model/JenkinsBuildUrl` into the job path (Jenkins full name, folders joined
+with "/": `/job/Team/job/UI-Test/125/` → `Team/UI-Test`) and the build number; trailing parts like `/console`
+are ignored. Blank → 400; not a Jenkins build URL (no `/job/<name>/<number>/`, Blue Ocean, `lastFailedBuild`)
+→ **400 before anything runs**. The log is always fetched from the configured `JENKINS_URL`; the URL's host is
+not used for that. The analysis is stored and returned with its `id`.
+
+| Endpoint | Returns |
+|---|---|
+| `POST /api/v1/analysis/build` | runs + stores the analysis; the response below (with `generatedPrompt`) |
+| `GET /api/v1/analyses` | the history, newest first: `id, jobName, jobPath, buildNumber, buildUrl, buildStatus, analysisStatus, errorCategory, headline, analyzedAt` (no logs) |
+| `GET /api/v1/analyses/{id}` | one stored analysis in the same shape as the POST response, **without `generatedPrompt`** (not stored); 404 if missing |
 
 Response for the real failing build #7 (long values shortened; usage values from a real run on 2026-09-27):
 ```json
 {
+  "id": 1,
+  "jobName": "Mini-UI-Automation",
+  "buildNumber": 7,
+  "buildUrl": "http://localhost:8080/job/Mini-UI-Automation/7/",
+  "analyzedAt": "2026-10-04T09:42:00Z",
+  "testContext": { "scenario": "Open Google", "step": "Arama kutusuna tıkla.", "featureFile": "src/test/resources/features/Example.feature", "featureLine": 6 },
   "buildStatus": "FAILURE",
   "failedScenario": "Open Google",
   "featureFile": "src/test/resources/features/Example.feature",
@@ -169,6 +236,7 @@ $0.0011–0.0026 per analysis. Weak spot: a third action is sometimes generic ("
 ```
 POST /api/v1/analysis/build
   → BuildAnalysisController
+    → JenkinsBuildUrl.parse(buildUrl) → job path + build number   (400 if not a Jenkins build URL)
     → AnalyzeBuildUseCase (impl: AnalyzeBuildService)
         → BuildSourcePort (out) → JenkinsBuildSourceAdapter → JenkinsHttpClient
               → GET /job/{job}/{build}/consoleText  (raw bytes → ConsoleLogDecoder)
@@ -189,8 +257,15 @@ POST /api/v1/analysis/build
         → RootCauseParser (JSON → RootCauseAnalysis, normalised) → withFallbackLocation(evidence)
         → RootCauseFormatter → aiAnalysis (🚨 KÖK NEDEN / 📍 KONUM / ✅ AKSİYON, ≤ 10 lines)
         → BuildAnalysisResult (domain: context + prompt + aiAnalysis + rootCauseAnalysis + llmMetrics)
-    → BuildAnalysisResponseMapper → AnalyzeBuildResponse (DTO, flattened)
+    → BuildAnalysisResponseMapper.toEntity → AnalysisRepository.save → PostgreSQL (analyses)
+    → BuildAnalysisResponseMapper.toResponse → AnalyzeBuildResponse (DTO, flattened, with the stored id)
+
+GET /api/v1/analyses        → AnalysisRepository.findAllByOrderByAnalyzedAtDesc()  (list columns only)
+GET /api/v1/analyses/{id}   → AnalysisRepository.findById(id) → mapper.toResponse(entity)  (404 if missing)
 ```
+
+The analysis core (`application`, `domain`) does not know the database; storing happens in the controller
+after `AnalyzeBuildService` returns.
 
 ## LLM provider architecture
 
@@ -240,6 +315,8 @@ Base package: `com.company.buildanalyzer`
 - `model/BuildAnalysisResult` — `BuildAnalysisContext context`, generatedPrompt, aiAnalysis,
   `RootCauseAnalysis rootCauseAnalysis`, `LlmMetrics llmMetrics` (both `null` for SUCCESS). What the use case returns.
 - `model/RootCauseAnalysis` — rootCause, file, line, method, actions (never null, immutable, max 3).
+- `model/JenkinsBuildUrl` — `parse(url)` → jobPath (folders joined with "/"), buildNumber, normalised url;
+  `IllegalArgumentException` for anything else (the controller answers 400).
   `withFallbackLocation(FailureLocation)` fills a missing file/line/method from the evidence.
 - `model/ErrorCategory` — SELENIUM, MAVEN, CUCUMBER, JENKINS, INFRA, UNKNOWN, NONE (successful build).
 
@@ -340,23 +417,30 @@ Empty sections are skipped. Build #7's prompt is ~20k chars (~6k tokens).
   without evidence are omitted.
 
 ### api (inbound adapter — Spring web)
-- `controller/BuildAnalysisController` — the one endpoint; thin: `useCase.analyze` → `mapper.toResponse`.
-- `dto/request/AnalyzeBuildRequest` — record `{ jobName, buildNumber }` + validation.
+- `controller/BuildAnalysisController` — the three endpoints (see "How a request flows").
+- `dto/request/AnalyzeBuildRequest` — record `{ buildUrl }` + validation.
 - `dto/response/AnalyzeBuildResponse` — flat record (see the API example above). Tool-neutral and
   provider-neutral names; `rootCauseAnalysis` is a nested `RootCauseAnalysisResponse` (rootCause, file, line,
   method, actions).
 - `mapper/BuildAnalysisResponseMapper` (@Component) — flattens the domain value objects
   (`FailedScenario`, `FailedStep`, `FailureLocation`, `FailedInteraction`, `LlmMetrics`), maps
   `RootCauseAnalysis` to the nested DTO and converts
-  `ErrorCategory` via `.name()`.
+  `ErrorCategory` via `.name()`. Decides `testContext` (scenario or step found → set, else `null`).
+  `toEntity` builds the `analyses` row (build URL, headline, analysis status, `result_json`);
+  `toResponse(Analysis)` rebuilds the response from `result_json` + the row's columns.
 - `error/GlobalExceptionHandler` (@RestControllerAdvice) — `MethodArgumentNotValidException` → 400,
   `RestClientResponseException` → upstream status (Jenkins), `ResourceAccessException` → 502 (Jenkins
-  unreachable), `LlmAnalysisException` → 502 (AI analysis failed).
+  unreachable), `LlmAnalysisException` → 502 (AI analysis failed), `ResponseStatusException` → its status
+  (400 invalid build URL, 404 unknown analysis).
 
-### infrastructure (outbound adapters — all Jenkins/OpenAI/HTTP detail lives here)
+### infrastructure (outbound adapters — all Jenkins/OpenAI/HTTP/database detail lives here)
+- `persistence/Analysis` — JPA entity of the `analyses` table.
+- `persistence/AnalysisRepository` — Spring Data repository; `Summary` is the history-list projection (reads
+  only the list columns, never the logs or `result_json`). Used directly by the controller.
 - `jenkins/JenkinsBuildSourceAdapter` (@Component) — implements `BuildSourcePort`.
 - `jenkins/JenkinsHttpClient` (@Component) — `RestClient` with base URL; Basic auth only when a username
-  is configured (warns if the token is missing). Reads `consoleText` as **raw bytes** and decodes it with
+  is configured (warns if the token is missing). Builds `/job/<a>/job/<b>/<n>/consoleText` from the job full name
+  (`a/b`, each segment encoded). Reads `consoleText` as **raw bytes** and decodes it with
   `ConsoleLogDecoder`.
 - `jenkins/ConsoleLogDecoder` (package-private) — strict UTF-8; if that fails, line by line: valid UTF-8
   lines as UTF-8, others with the fallback charset (windows-1254). Reason: the Turkish Windows test JVM
