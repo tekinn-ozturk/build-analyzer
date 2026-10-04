@@ -48,7 +48,7 @@ export default function AnalysisPage() {
         <StatusChip status={analysis.status} />
       </Stack>
       <Stack direction="row" spacing={3} sx={{ mt: 1, color: 'text.secondary', flexWrap: 'wrap' }}>
-        <Typography variant="body2">Project: {analysis.jobName}</Typography>
+        <Typography variant="body2">Job: {analysis.jobName}</Typography>
         <Typography variant="body2">Analyzed: {formatDateTime(analysis.analyzedAt)}</Typography>
         <Link href={analysis.buildUrl} target="_blank" rel="noreferrer" variant="body2" underline="hover">
           Jenkins'te aç <OpenInNewIcon sx={{ fontSize: 14, verticalAlign: 'middle' }} />

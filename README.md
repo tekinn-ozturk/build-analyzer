@@ -4,18 +4,28 @@
 > for understanding the project without reading every file. It is kept in sync with the
 > code by hand. Read it fully first; only open individual files when you need to change them.
 
-AI-assisted **Jenkins build failure analyzer** for a Turkish-speaking QA team. A REST API that
+AI-assisted **Jenkins build failure analyzer** for a Turkish-speaking QA team (about 4 users, one
+maintainer). The user pastes a **Jenkins build URL**; the app
 
-1. pulls a Jenkins build's console log,
-2. distills it into a small, structured context (status, scenario, failing step, full exception
+1. parses it into job path + build number,
+2. pulls the build's console log from Jenkins,
+3. distills it into a small, structured context (status, scenario, failing step, full exception
    block, failing code location, failing UI command/locator, relevant log lines, last 200 lines),
-3. classifies the error family,
-4. builds a short, directive **Turkish** prompt (structured evidence first), and
-5. asks **OpenAI GPT-5 mini** for a short root-cause analysis.
+4. classifies the error family,
+5. builds a short, directive **Turkish** prompt (structured evidence first),
+6. asks **OpenAI GPT-5 mini** for a short root-cause analysis, and
+7. stores the analysis in **PostgreSQL**, where the history screen reads it from.
 
-The response contains the extracted fields, the prompt, the model's answer (`aiAnalysis`) and the
-usage statistics of the call (provider, model, tokens, duration, estimated cost). SUCCESS builds are
-answered instantly without calling the LLM.
+```
+Jenkins Build URL → Analyze → AI analysis → PostgreSQL → History
+```
+
+There are no users, projects or pipelines (removed on purpose, see [Database](#database)) and no login.
+SUCCESS builds are answered instantly without calling the LLM.
+
+**Guiding rule (owner's decision): keep the codebase small enough that one developer can follow a bug
+through it in 10–15 minutes.** No new layers, generic abstractions, extra endpoints or "future-proofing"
+without a real need; backend changes are agreed with the owner first.
 
 ## Tech stack
 - Java 21, Spring Boot 3.3.5, Maven, Lombok
@@ -30,8 +40,12 @@ answered instantly without calling the LLM.
 
 ## Running locally
 
-Prerequisites: a Jenkins on `http://localhost:8080` and an **OpenAI API key**. The app listens on
-**port 8090**.
+Prerequisites: a Jenkins on `http://localhost:8080`, an **OpenAI API key**, a local **PostgreSQL**
+(database `build_analyzer`, user `build_analyzer_user`; PostgreSQL 18 is used) and Node.js for the frontend.
+The backend listens on **port 8090**, the frontend dev server on **5173**.
+
+**Everyday start:** run `BuildAnalyzerApplication` in IntelliJ (env vars below) → `cd frontend` → `npm run dev`
+→ open http://localhost:5173.
 
 Secrets come **only from environment variables** — never from `application.yml`:
 
@@ -54,6 +68,7 @@ Secrets come **only from environment variables** — never from `application.yml
   $env:OPENAI_API_KEY = "<key>"
   $env:JENKINS_USERNAME = "<user>"
   $env:JENKINS_API_TOKEN = "<token>"
+  $env:DB_PASSWORD = "<db password>"
   mvn spring-boot:run
   ```
   (cmd.exe: `set "OPENAI_API_KEY=<key>"` etc.)
@@ -72,6 +87,14 @@ skipped by default:
   **real local PostgreSQL** when `DB_PASSWORD` is set; every test is rolled back, nothing stays in the database;
 - the live OpenAI test over 4 logs (`-Dopenai.live=true`).
 
+With `DB_PASSWORD` set: `Tests run: 153, Failures: 0, Errors: 0, Skipped: 1` (only the live test skipped).
+On the developer machine `DB_PASSWORD` is a **Windows user environment variable**, so `mvn test` in any newly
+opened terminal picks it up (IntelliJ's app run configuration does not pass its env vars to tests or
+terminals; restart IntelliJ after changing a Windows variable).
+
+Frontend: `cd frontend && npm test` — 24 Vitest tests (URL parser, response mapping, `AnalyzeForm`,
+`AiAnalysis` render rules); `npm run build` also type-checks.
+
 After deleting/renaming classes run `mvn clean test` so stale `.class` files in `target/` are not picked up.
 
 ## Database
@@ -88,13 +111,31 @@ Hibernate only validates it (`ddl-auto: validate`).
 - `result_json` (TEXT, Jackson) is the analysis response without the prompt and the logs; the logs have their
   own columns. **The prompt and the full console log are not stored** (the log stays on Jenkins).
 - `analysis_status`: `COMPLETED` · `SKIPPED` (SUCCESS build, no LLM call) · `UNSTRUCTURED` (model answer not parseable).
+- `headline` (history label): simple exception name, else the error category; "Build başarılı" for SUCCESS.
+- Every analysis is a new row — analysing the same build twice gives two rows. Failed analyses (Jenkins or
+  OpenAI error) are not stored.
 - No authentication: everybody who can reach the app sees the whole history.
+- To look at the data: pgAdmin → `build_analyzer` → `analyses`, or
+  `psql -h localhost -U build_analyzer_user -d build_analyzer` (psql is in `C:\Program Files\PostgreSQL\18\bin`).
 
 ## Frontend
 
-`frontend/` — React 19, TypeScript, Vite, MUI, React Router (backend calls with `fetch`). Kept deliberately
-small (lean V1); the long frontend design document is the product vision, not the implemented scope.
-All backend calls are in `src/api/analysisApi.ts`.
+`frontend/` — React 19, TypeScript, Vite, MUI 9, React Router 8 (backend calls with the browser's `fetch`,
+no axios). Kept deliberately small (lean V1): no Redux/Zustand/TanStack Query, state is `useState`/`useEffect`
+in the page or component; flat folders, no feature/domain/mapper layers. The long frontend design document
+written early on (kept outside the repo) is the product vision, not the implemented scope.
+
+```
+src/
+  api/analysisApi.ts        every backend call + toAnalysis() (backend response → what the screens show)
+  types/analysis.ts         AnalysisResponse (backend), Analysis (screens), AnalysisSummary (history row), TestContext
+  pages/                    DashboardPage (URL input + history), AnalysisPage (/analyses/:id), HistoryPage (/history)
+  components/               AnalyzeForm, HistoryList (Jenkins-style table, loads the history itself), AiAnalysis,
+                            TestContextView (IDE-like), LogViewer, StatusChip, Layout, Sidebar
+  utils/jenkinsUrl.ts       URL parser for instant form feedback (backend re-parses; JenkinsBuildUrl is authoritative)
+  utils/format.ts           date formatting
+  theme.ts                  MUI theme + monospace font
+```
 
 ```
 cd frontend
@@ -108,7 +149,16 @@ Flow: `DashboardPage` (URL → `AnalyzeForm` → "Build analiz ediliyor..." → 
 `AnalysisPage` (`/analyses/:id` → `GET /api/v1/analyses/{id}`, tabs AI Analysis / Relevant Logs) ·
 `HistoryList` (`GET /api/v1/analyses`) on the dashboard and on `/history`.
 
-- **AI Analysis** = Hata Sebebi → where it failed → Çözüm Önerileri.
+- Detail header: Build #, status chip, `Job:` (Jenkins full name), analysis date, "Jenkins'te aç" link.
+- **AI Analysis** = **Hata Sebebi** (`rootCauseAnalysis.rootCause`) → where it failed → **Çözüm Önerileri**
+  (`actions`). SUCCESS build → green "Build başarılı" message. Unparseable model answer → the raw `aiAnalysis`
+  text as the cause. (The words "Kök Neden" / "Aksiyon" are not used in the UI.)
+- **Relevant Logs** tab: `relevantLogSnippet` / "Last 200 Lines" toggle; the full log stays on Jenkins (link).
+- The analyze action shows "Build analiz ediliyor..." with an indeterminate progress bar while the
+  synchronous POST runs (3–10 s); there are no real progress events.
+- UI labels are English where the spec gave them (Analyze Build, Build History, …), AI content is Turkish.
+  `index.html` uses `lang="en"` on purpose: with `tr`, MUI's upper-casing turns "Build" into "BUİLD";
+  Turkish headings are written in upper case in the source ("HATA SEBEBİ").
 - **The only render rule for "where" is `testContext`** (`types/analysis.ts`): not null → IDE-like view
   (`TestContextView`: feature file, scenario, failed step and its line); null → plain error summary card
   (Maven / Jenkins / pipeline / infrastructure failures). The frontend knows no test framework; every
@@ -191,8 +241,13 @@ Response for the real failing build #7 (long values shortened; usage values from
   prices per 1M tokens, 6 decimals). Cached-input discounts are ignored, so it is an upper estimate.
 - `responseTimeMs` is the wall-clock time of the LLM call only (not the Jenkins fetch).
 - **SUCCESS build:** no prompt is built and the LLM is not called — `errorCategory` = `NONE`,
-  error fields `null`, `generatedPrompt`, `rootCauseAnalysis` and all usage fields = `null`,
+  error fields, `testContext`, `rootCauseAnalysis` and all usage fields = `null`, no `generatedPrompt` key,
   `aiAnalysis` = "Build başarıyla tamamlandı. Analiz gerektiren bir hata tespit edilmedi."
+- `testContext` is set when the log shows a failing scenario or step (`scenario`, `step`, `featureFile`,
+  `featureLine` = line of the step); `null` for Maven / Jenkins / infrastructure failures. The frontend's
+  only rule for "IDE view or plain error card".
+- `generatedPrompt` has `@JsonInclude(NON_NULL)`: present in a POST response after an LLM call, absent
+  (no key at all) in GET responses and for SUCCESS builds.
 - **Errors:** 400 validation; Jenkins non-2xx → same status (e.g. 401/403 = bad/missing credentials,
   404 = no such job/build); Jenkins unreachable → 502; OpenAI unreachable / timeout / non-2xx (e.g. 401
   wrong key, 429 rate limit/quota) / empty or refused answer → 502 `{"error": "AI analysis failed: ..."}`.
@@ -315,9 +370,10 @@ Base package: `com.company.buildanalyzer`
 - `model/BuildAnalysisResult` — `BuildAnalysisContext context`, generatedPrompt, aiAnalysis,
   `RootCauseAnalysis rootCauseAnalysis`, `LlmMetrics llmMetrics` (both `null` for SUCCESS). What the use case returns.
 - `model/RootCauseAnalysis` — rootCause, file, line, method, actions (never null, immutable, max 3).
-- `model/JenkinsBuildUrl` — `parse(url)` → jobPath (folders joined with "/"), buildNumber, normalised url;
-  `IllegalArgumentException` for anything else (the controller answers 400).
   `withFallbackLocation(FailureLocation)` fills a missing file/line/method from the evidence.
+- `model/JenkinsBuildUrl` — `parse(url)` → jobPath (folders joined with "/"), buildNumber, normalised url
+  (trailing `/console`, query, fragment dropped; context path and port kept); `IllegalArgumentException` for
+  anything else (the controller answers 400).
 - `model/ErrorCategory` — SELENIUM, MAVEN, CUCUMBER, JENKINS, INFRA, UNKNOWN, NONE (successful build).
 
 ### application (use cases + parsing/prompt logic — may use Spring stereotypes, depends only on domain and ports)
@@ -419,9 +475,11 @@ Empty sections are skipped. Build #7's prompt is ~20k chars (~6k tokens).
 ### api (inbound adapter — Spring web)
 - `controller/BuildAnalysisController` — the three endpoints (see "How a request flows").
 - `dto/request/AnalyzeBuildRequest` — record `{ buildUrl }` + validation.
-- `dto/response/AnalyzeBuildResponse` — flat record (see the API example above). Tool-neutral and
-  provider-neutral names; `rootCauseAnalysis` is a nested `RootCauseAnalysisResponse` (rootCause, file, line,
-  method, actions).
+- `dto/response/AnalyzeBuildResponse` — flat record (see the API example above), used by POST and GET
+  `/analyses/{id}`. Tool-neutral and provider-neutral names; header fields `id, jobName, buildNumber,
+  buildUrl, analyzedAt` come from the stored row; `rootCauseAnalysis` is a nested `RootCauseAnalysisResponse`
+  (rootCause, file, line, method, actions); `testContext` a nested `TestContextResponse`
+  (scenario, step, featureFile, featureLine).
 - `mapper/BuildAnalysisResponseMapper` (@Component) — flattens the domain value objects
   (`FailedScenario`, `FailedStep`, `FailureLocation`, `FailedInteraction`, `LlmMetrics`), maps
   `RootCauseAnalysis` to the nested DTO and converts
@@ -475,6 +533,11 @@ Every value can be overridden by the environment variable shown. **No secret is 
 | Property | Env var | Default | Notes |
 |---|---|---|---|
 | `server.port` | — | `8090` | 8080 is the local Jenkins |
+| `spring.datasource.url` | `DB_URL` | `jdbc:postgresql://localhost:5432/build_analyzer` | |
+| `spring.datasource.username` | `DB_USERNAME` | `build_analyzer_user` | |
+| `spring.datasource.password` | `DB_PASSWORD` | empty | env only; required to start |
+| `spring.jpa.hibernate.ddl-auto` | — | `validate` | schema only via Flyway migrations |
+| `spring.jpa.open-in-view` | — | `false` | |
 | `jenkins.url` | `JENKINS_URL` | `http://localhost:8080` | |
 | `jenkins.username` | `JENKINS_USERNAME` | empty | empty = anonymous (this Jenkins then answers 403) |
 | `jenkins.api-token` | `JENKINS_API_TOKEN` | empty | |
@@ -499,8 +562,12 @@ Update the two pricing values if OpenAI changes its prices or another model is c
   framework-related; application never imports `infrastructure.*` (enforced by `ArchitectureBoundaryTest`).
 - **Provider independence:** the application layer knows only `LlmProvider` / `LlmCompletion`; provider
   names, wire formats, keys and prices live only in `infrastructure/llm/<provider>` + config.
-- Controllers return DTOs, never domain models; conversion goes through the mapper.
-- Jenkins/OpenAI/auth/HTTP details live only in `infrastructure` + config.
+- Controllers return DTOs, never domain models; conversion goes through the mapper. (Exception: the
+  history list returns the repository's `Summary` projection directly — it is already exactly the list row.)
+- **The analysis core does not know the database:** storing and reading happen in the controller through
+  `AnalysisRepository`; `AnalyzeBuildService` and everything below it stay DB-free.
+- **Schema changes only through a new Flyway migration** (`V3__...`); never edit an applied one.
+- Jenkins/OpenAI/database/HTTP details live only in `infrastructure` + config.
 - Prefer rule lists / data-driven structures over long if-else chains (ErrorClassifier,
   RelevantLogExtractor, FRAMEWORK_PACKAGES, language map).
 - Keep parsing **tool-neutral** in the domain; tool-specific knowledge goes into strategy
@@ -524,8 +591,13 @@ Update the two pricing values if OpenAI changes its prices or another model is c
   (`EnvironmentConfigBindingTest`) or set values explicitly, because an `OPENAI_API_KEY` on the developer
   machine would otherwise leak into them.
 - **Manual test job:** `Mini-UI-Automation` — builds #1–#5 are SUCCESS; **#7 is a real Selenium failure**
-  (locator `name=qqqqqqqq`, `ExampleSteps.java:28`). Its full console log (200 lines) is the test fixture
-  `src/test/resources/logs/build-7-selenium-failure.log`.
+  (locator `name=qqqqqqqq`, `ExampleSteps.java:28`); #9 fails with a Selenium `TimeoutException`. Build #7's
+  full console log (200 lines) is the test fixture `src/test/resources/logs/build-7-selenium-failure.log`.
+- **PostgreSQL 18:** Flyway logs "PostgreSQL 18.6 is newer than this version of Flyway" — a warning only,
+  migrations work. Upgrade Flyway (via Spring Boot) when convenient.
+- **Analysis ids have gaps:** the DB tests roll back their rows, but PostgreSQL does not give used ids back.
+- **Windows shell gotcha (Git Bash):** `/tmp` in Git Bash is not the folder Windows `node` sees; use a
+  Windows path for files shared between them.
 - `OpenAiProviderTest` uses an in-process `com.sun.net.httpserver.HttpServer` stub (`StubOpenAiServer`,
   realistic Responses API replies incl. the `reasoning` item); `Build7OpenAiEndToEndTest` runs build #7 through
   the whole pipeline against that stub and checks request, schema, rendered output, tokens and cost;
@@ -548,11 +620,20 @@ Update the two pricing values if OpenAI changes its prices or another model is c
   and anti-hallucination rules.
 - Usage statistics in the response: provider, model, tokens, response time, estimated cost.
 - Decision-support output: JSON answer (strict schema) → parsed → ≤ 10-line 🚨/📍/✅ text + `rootCauseAnalysis`.
-- 128 unit tests + an opt-in live test over build #7 and three sample logs.
+- Input is a Jenkins build URL; jobs inside folders of any depth (`/job/Team/job/UI/job/X/125/`).
+- PostgreSQL history (one `analyses` table, Flyway V1 + V2) with `GET /api/v1/analyses` and `/{id}`.
+- React frontend: URL input, history table, analysis detail (Hata Sebebi, IDE-like test context, Çözüm
+  Önerileri, logs).
+- Verified end to end on 2026-10-04 against the real Jenkins, OpenAI and PostgreSQL 18 (build #7: stored,
+  listed, detail without prompt; ~6 s, ~$0.0024 per analysis).
+- 149 unit tests + 3 PostgreSQL tests + an opt-in live OpenAI test; 24 frontend tests.
 
 **Next**
-- Run build #7 through the running app (real Jenkins + OpenAI). Already verified without Jenkins (live test,
-  new format): 5,880 input + 574 output tokens, ~6 s, $0.002618, correct root cause and location.
+- Analyse a real build of a job **inside a Jenkins folder** — supported and unit-tested, never tried against
+  the real Jenkins.
+- Decide how the app is served for the team (e.g. frontend build copied into Spring's `static/` — then
+  `/analyses/:id` needs a forward to `index.html` on refresh — or a separate web server). Today it only runs as
+  two dev servers.
 - Collect real failed builds (not only synthetic samples) as an evaluation set; tighten the prompt where a
   third action is still generic.
 - Add change context: the commits/changed files of the build from the Jenkins API and, if possible, the
@@ -560,6 +641,12 @@ Update the two pricing values if OpenAI changes its prices or another model is c
 - More `InteractionExtractor` implementations (Playwright, Cypress) when those logs arrive.
 - Further providers (Anthropic, Ollama) as separate adapters when needed.
 
+**Decided against for V1 (do not re-add without the owner)**
+- Users, projects, project members, pipelines, roles, login (built once, then removed — V2 migration).
+- A "NE OLDU?" section (expected / actual / mechanism) — needs a new `whatHappened` field in the LLM schema
+  and prompt; the owner declined it for now.
+- Async analysis, SSE/real progress events, caching, queues, extra DTO/mapper/repository layers.
+- Structured Evidence tab and the 6-stage progress screen (replaced by the simpler V1 screens).
+
 **Open side-tasks**
 - Revoke the old Jenkins token (see Security).
-- Add a `.gitignore` (`target/`, IDE files, secrets) — there is none yet, so `target/` shows up in git.
