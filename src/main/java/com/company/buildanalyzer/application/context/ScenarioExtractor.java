@@ -2,6 +2,9 @@ package com.company.buildanalyzer.application.context;
 
 import com.company.buildanalyzer.domain.model.FailedScenario;
 
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -20,7 +23,7 @@ import java.util.regex.Pattern;
  */
 final class ScenarioExtractor {
 
-    private static final String KEYWORD = "(?:Scenario(?: Outline| Template)?|Senaryo(?: [Tt]aslağı)?)";
+    private static final String KEYWORD = "(?:Scenario(?: Outline| Template)?|Example|Senaryo(?: [Tt]aslağı)?|Örnek)";
 
     /** {@code <feature>:<line> [# [Scenario:] <name>]} under "Failed scenarios:". */
     private static final Pattern FAILED_LIST_ENTRY = Pattern.compile(
@@ -31,7 +34,7 @@ final class ScenarioExtractor {
             "^\\s*" + KEYWORD + ":\\s*(.*?)\\s*(?:#\\s*(\\S.*?\\.feature):(\\d+))?\\s*$");
 
     /** ANSI colour codes of Cucumber's coloured (non-monochrome) pretty output, e.g. {@code ESC[90m}. */
-    private static final Pattern ANSI_ESCAPE = Pattern.compile("\\u001B\\[[0-9;]*[A-Za-z]");
+    static final Pattern ANSI_ESCAPE = Pattern.compile("\\u001B\\[[0-9;]*[A-Za-z]");
 
     /** A location comment left on a name, e.g. {@code Open Google     # src/.../Example.feature:4}. */
     private static final Pattern TRAILING_LOCATION_COMMENT = Pattern.compile("\\s+#\\s*\\S.*\\.feature(?::\\d+)?\\s*$");
@@ -65,6 +68,22 @@ final class ScenarioExtractor {
     }
 
     private static FailedScenario fromFailedScenariosList(List<String> lines) {
+        List<FailedScenario> listed = failedScenariosList(lines);
+        if (listed.isEmpty()) {
+            return null;
+        }
+        FailedScenario first = listed.get(0);
+        // Some Cucumber versions print only "<feature>:<line>": look the name up.
+        return first.name() != null ? first
+                : new FailedScenario(nameAt(lines, first.featureFile(), first.featureLine()), first.featureFile(), first.featureLine());
+    }
+
+    /**
+     * Every entry of Cucumber's {@code Failed scenarios:} lists (one list per test run), in log order.
+     * The name is {@code null} when the entry is only {@code <feature>:<line>}.
+     */
+    static List<FailedScenario> failedScenariosList(List<String> lines) {
+        List<FailedScenario> listed = new ArrayList<>();
         for (int i = 0; i < lines.size(); i++) {
             if (!lines.get(i).contains("Failed scenarios:")) {
                 continue;
@@ -75,16 +94,21 @@ final class ScenarioExtractor {
                 }
                 Matcher entry = FAILED_LIST_ENTRY.matcher(ANSI_ESCAPE.matcher(lines.get(j)).replaceAll(""));
                 if (!entry.matches()) {
-                    return null;      // the failure list has ended
+                    break;            // the failure list has ended
                 }
-                String file = entry.group(1);
-                Integer line = Integer.valueOf(entry.group(2));
-                String name = cleanName(entry.group(3));
-                // Some Cucumber versions print only "<feature>:<line>": look the name up.
-                return new FailedScenario(name != null ? name : nameAt(lines, file, line), file, line);
+                listed.add(new FailedScenario(cleanName(entry.group(3)), decoded(entry.group(1)), Integer.valueOf(entry.group(2))));
             }
         }
-        return null;
+        return listed;
+    }
+
+    /** The list prints the feature as a URI ({@code Odeme%20akisi.feature}), the pretty formatter as a path. */
+    private static String decoded(String featureFile) {
+        try {
+            return URLDecoder.decode(featureFile.replace("+", "%2B"), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException notEncoded) {
+            return featureFile;
+        }
     }
 
     private static String nameAt(List<String> lines, String file, int line) {
@@ -98,7 +122,8 @@ final class ScenarioExtractor {
         return null;
     }
 
-    private static FailedScenario parseScenarioLine(String line) {
+    /** @return the scenario if {@code line} is a {@code Scenario: <name> [# <feature>:<line>]} line, else {@code null} */
+    static FailedScenario parseScenarioLine(String line) {
         Matcher scenario = SCENARIO_LINE.matcher(ANSI_ESCAPE.matcher(line).replaceAll(""));
         if (!scenario.matches()) {
             return null;

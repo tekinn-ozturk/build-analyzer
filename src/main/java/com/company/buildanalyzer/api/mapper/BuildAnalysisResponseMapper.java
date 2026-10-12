@@ -1,17 +1,24 @@
 package com.company.buildanalyzer.api.mapper;
 
 import com.company.buildanalyzer.api.dto.response.AnalyzeBuildResponse;
+import com.company.buildanalyzer.api.dto.response.FailureGroupResponse;
 import com.company.buildanalyzer.api.dto.response.RootCauseAnalysisResponse;
 import com.company.buildanalyzer.api.dto.response.TestContextResponse;
+import com.company.buildanalyzer.api.dto.response.TestFailureResponse;
+import com.company.buildanalyzer.api.dto.response.TestSummaryResponse;
 import com.company.buildanalyzer.domain.model.BuildAnalysisContext;
 import com.company.buildanalyzer.domain.model.BuildAnalysisResult;
 import com.company.buildanalyzer.domain.model.FailedInteraction;
 import com.company.buildanalyzer.domain.model.FailedScenario;
 import com.company.buildanalyzer.domain.model.FailedStep;
+import com.company.buildanalyzer.domain.model.FailureGroup;
+import com.company.buildanalyzer.domain.model.FailureGroupAnalysis;
 import com.company.buildanalyzer.domain.model.FailureLocation;
 import com.company.buildanalyzer.domain.model.JenkinsBuildUrl;
 import com.company.buildanalyzer.domain.model.LlmMetrics;
 import com.company.buildanalyzer.domain.model.RootCauseAnalysis;
+import com.company.buildanalyzer.domain.model.TestFailure;
+import com.company.buildanalyzer.domain.model.TestSummary;
 import com.company.buildanalyzer.infrastructure.persistence.Analysis;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -20,7 +27,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -31,6 +40,8 @@ import java.util.Optional;
 @Component
 @RequiredArgsConstructor
 public class BuildAnalysisResponseMapper {
+
+    private static final String ANALYZED = FailureGroupAnalysis.Status.ANALYZED.name();
 
     /** Not in result_json: the prompt is not stored; the logs and these header fields have their own columns. */
     private static final List<String> NOT_IN_RESULT_JSON = List.of(
@@ -76,6 +87,9 @@ public class BuildAnalysisResponseMapper {
                 result.aiAnalysis(),
                 Optional.ofNullable(result.rootCauseAnalysis()).map(BuildAnalysisResponseMapper::toResponse).orElse(null),
                 testContext(scenario, step),
+                testSummary(context.testSummary()),
+                result.aiSummary(),
+                failureGroups(context.failureGroups(), result.groupAnalyses()),
                 metrics.map(LlmMetrics::provider).orElse(null),
                 metrics.map(LlmMetrics::model).orElse(null),
                 metrics.map(LlmMetrics::promptTokens).orElse(null),
@@ -114,12 +128,12 @@ public class BuildAnalysisResponseMapper {
         analysis.setJobPath(build.jobPath());
         analysis.setBuildNumber(build.buildNumber());
         analysis.setBuildStatus(response.buildStatus());
-        // SKIPPED: successful build, no LLM call. UNSTRUCTURED: the model's answer could not be parsed.
-        analysis.setAnalysisStatus(result.llmMetrics() == null ? "SKIPPED" : rootCause == null ? "UNSTRUCTURED" : "COMPLETED");
+        analysis.setAnalysisStatus(analysisStatus(result, response));
         analysis.setErrorCategory(response.errorCategory());
         analysis.setExceptionType(response.exceptionType());
         analysis.setHeadline(headline(response));
-        analysis.setErrorReason(rootCause != null ? rootCause.rootCause() : response.aiAnalysis());
+        analysis.setErrorReason(rootCause != null ? rootCause.rootCause()
+                : response.aiSummary() != null ? response.aiSummary() : response.aiAnalysis());
         analysis.setResultJson(resultJson(response));
         analysis.setRelevantLogs(response.relevantLogSnippet());
         analysis.setLast200Lines(response.last200Lines());
@@ -142,10 +156,73 @@ public class BuildAnalysisResponseMapper {
                 step.map(FailedStep::featureLine).orElse(null));
     }
 
-    /** Short label for the history list, e.g. "NoSuchElementException". */
+    /**
+     * SKIPPED: successful build, no LLM call. UNSTRUCTURED: no usable answer from the model.
+     * PARTIAL: some failure groups have no AI answer (call limit or a failed call). COMPLETED: all answered.
+     */
+    private static String analysisStatus(BuildAnalysisResult result, AnalyzeBuildResponse response) {
+        if (result.llmMetrics() == null) {
+            return "SKIPPED";
+        }
+        List<FailureGroupResponse> groups = response.failureGroups();
+        boolean answered = response.rootCauseAnalysis() != null || response.aiSummary() != null
+                || groups.stream().anyMatch(group -> ANALYZED.equals(group.aiStatus()));
+        if (!answered) {
+            return "UNSTRUCTURED";
+        }
+        return groups.stream().allMatch(group -> ANALYZED.equals(group.aiStatus())) ? "COMPLETED" : "PARTIAL";
+    }
+
+    /** Every failure group with its AI answer and its failed tests; the full stack trace only for the representative. */
+    private static List<FailureGroupResponse> failureGroups(List<FailureGroup> groups, List<FailureGroupAnalysis> analyses) {
+        Map<String, FailureGroupAnalysis> byId = new HashMap<>();
+        analyses.forEach(analysis -> byId.put(analysis.groupId(), analysis));
+        return groups.stream().map(group -> {
+            TestFailure representative = group.representative();
+            Optional<FailureLocation> location = Optional.ofNullable(representative.failureLocation());
+            FailureGroupAnalysis analysis = byId.getOrDefault(group.id(),
+                    FailureGroupAnalysis.notAnalyzed(group.id(), FailureGroupAnalysis.Status.SKIPPED, "AI analizi yok."));
+            return new FailureGroupResponse(
+                    group.id(),
+                    group.signature(),
+                    group.failures().size(),
+                    representative.exceptionType(),
+                    representative.message(),
+                    location.map(FailureLocation::file).orElse(null),
+                    location.map(FailureLocation::line).orElse(null),
+                    representative.stackTrace(),
+                    representative.logExcerpt(),
+                    analysis.status().name(),
+                    analysis.rootCause(),
+                    analysis.actions(),
+                    analysis.note(),
+                    group.failures().stream().map(BuildAnalysisResponseMapper::failureResponse).toList());
+        }).toList();
+    }
+
+    private static TestFailureResponse failureResponse(TestFailure failure) {
+        Optional<FailureLocation> location = Optional.ofNullable(failure.failureLocation());
+        return new TestFailureResponse(
+                testContext(Optional.ofNullable(failure.scenario()), Optional.ofNullable(failure.step())),
+                failure.exceptionType(),
+                failure.message(),
+                location.map(FailureLocation::file).orElse(null),
+                location.map(FailureLocation::line).orElse(null));
+    }
+
+    private static TestSummaryResponse testSummary(TestSummary summary) {
+        return summary == null ? null
+                : new TestSummaryResponse(summary.total(), summary.passed(), summary.failed(), summary.skipped());
+    }
+
+    /** Short label for the history list, e.g. "NoSuchElementException" or "10 başarısız test, 3 hata grubu". */
     private static String headline(AnalyzeBuildResponse response) {
         if ("SUCCESS".equalsIgnoreCase(response.buildStatus())) {
             return "Build başarılı";
+        }
+        int failedTests = response.failureGroups().stream().mapToInt(FailureGroupResponse::failureCount).sum();
+        if (failedTests > 1) {
+            return failedTests + " başarısız test, " + response.failureGroups().size() + " hata grubu";
         }
         if (response.exceptionType() != null) {
             return response.exceptionType().substring(response.exceptionType().lastIndexOf('.') + 1);

@@ -1,5 +1,6 @@
 package com.company.buildanalyzer.application.analysis;
 
+import com.company.buildanalyzer.domain.model.FailureGroupAnalysis;
 import com.company.buildanalyzer.domain.model.RootCauseAnalysis;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -8,7 +9,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -36,16 +39,8 @@ public class RootCauseParser {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public Optional<RootCauseAnalysis> parse(String answer) {
-        String json = jsonObject(answer);
-        if (json == null) {
-            log.warn("AI answer contains no JSON object; showing it as plain text");
-            return Optional.empty();
-        }
-        JsonNode root;
-        try {
-            root = objectMapper.readTree(json);
-        } catch (JsonProcessingException ex) {
-            log.warn("AI answer is not valid JSON ({}); showing it as plain text", ex.getOriginalMessage());
+        JsonNode root = readJson(answer);
+        if (root == null) {
             return Optional.empty();
         }
         String rootCause = text(root.get("rootCause"));
@@ -66,6 +61,49 @@ public class RootCauseParser {
                 line,
                 methodName(text(root.get("method"))),
                 actions(root.get("actions"))));
+    }
+
+    /** The model's answer for a build with several failed tests ({@link RootCauseSchema#FAILURE_GROUPS}). */
+    public record GroupsAnswer(String summary, Map<String, FailureGroupAnalysis> groups) {
+    }
+
+    /**
+     * Parses a {@link RootCauseSchema#FAILURE_GROUPS} answer. Groups without an id or a root cause are left out
+     * (the caller reports them as unanswered); actions are normalised as for a single failure.
+     * Empty when there is no usable JSON at all.
+     */
+    public Optional<GroupsAnswer> parseGroups(String answer) {
+        JsonNode root = readJson(answer);
+        if (root == null) {
+            return Optional.empty();
+        }
+        if (!root.path("groups").isArray()) {
+            log.warn("AI answer has no groups array; showing it as plain text");
+            return Optional.empty();
+        }
+        Map<String, FailureGroupAnalysis> groups = new LinkedHashMap<>();
+        for (JsonNode group : root.get("groups")) {
+            String id = text(group.get("id"));
+            String rootCause = text(group.get("rootCause"));
+            if (id != null && rootCause != null) {
+                groups.putIfAbsent(id, FailureGroupAnalysis.analyzed(id, rootCause, actions(group.get("actions"))));
+            }
+        }
+        return Optional.of(new GroupsAnswer(text(root.get("summary")), groups));
+    }
+
+    private JsonNode readJson(String answer) {
+        String json = jsonObject(answer);
+        if (json == null) {
+            log.warn("AI answer contains no JSON object; showing it as plain text");
+            return null;
+        }
+        try {
+            return objectMapper.readTree(json);
+        } catch (JsonProcessingException ex) {
+            log.warn("AI answer is not valid JSON ({}); showing it as plain text", ex.getOriginalMessage());
+            return null;
+        }
     }
 
     /**

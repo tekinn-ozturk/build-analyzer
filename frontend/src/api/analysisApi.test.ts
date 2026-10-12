@@ -10,6 +10,7 @@ const failure: AnalysisResponse = {
   relevantLogSnippet: 'snippet', last200Lines: 'tail', aiAnalysis: '🚨 KÖK NEDEN ...',
   rootCauseAnalysis: { rootCause: 'Locator bulunamadı.', actions: ['Locator\'ı düzelt.'] },
   testContext: { scenario: 'Open Google', step: 'Arama kutusuna tıkla.', featureFile: 'Example.feature', featureLine: 6 },
+  testSummary: { total: 1, passed: 0, failed: 1, skipped: 0 }, aiSummary: null, failureGroups: [],
 };
 
 describe('toAnalysis', () => {
@@ -34,6 +35,29 @@ describe('toAnalysis', () => {
     expect(analysis.ai).toBeNull();
     expect(analysis.errorType).toBeNull();
     expect(analysis.testContext).toBeNull();
+  });
+
+  it('uses the build summary for several failed tests and passes the failure groups through', () => {
+    const groups: AnalysisResponse['failureGroups'] = [{
+      id: 'G1', signature: 'sig', failureCount: 2, exceptionType: 'java.lang.AssertionError', aiStatus: 'ANALYZED',
+      rootCause: 'neden', actions: ['aksiyon'], aiNote: null, failures: [],
+    }];
+    const analysis = toAnalysis({
+      ...failure, rootCauseAnalysis: null, aiSummary: '2 test aynı nedenle düştü.', failureGroups: groups,
+      testSummary: { total: 30, passed: 28, failed: 2, skipped: 0 },
+    });
+
+    expect(analysis.ai).toEqual({ cause: '2 test aynı nedenle düştü.', suggestions: [] });
+    expect(analysis.failureGroups).toBe(groups);
+    expect(analysis.testSummary).toEqual({ total: 30, passed: 28, failed: 2, skipped: 0 });
+  });
+
+  it('reads an analysis stored before multi-failure support', () => {
+    const analysis = toAnalysis({ ...failure, failureGroups: undefined, testSummary: null });
+
+    expect(analysis.failureGroups).toEqual([]);
+    expect(analysis.testSummary).toBeNull();
+    expect(analysis.ai).toEqual({ cause: 'Locator bulunamadı.', suggestions: ['Locator\'ı düzelt.'] });
   });
 
   it('shows the raw answer when the backend could not parse the model answer', () => {

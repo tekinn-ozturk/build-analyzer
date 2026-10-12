@@ -6,11 +6,16 @@ import com.company.buildanalyzer.application.classifier.ErrorClassifier;
 import com.company.buildanalyzer.application.context.BuildContextBuilder;
 import com.company.buildanalyzer.application.context.RelevantLogExtractor;
 import com.company.buildanalyzer.application.context.SeleniumInteractionExtractor;
+import com.company.buildanalyzer.application.context.SyntheticConsoleLog;
+import com.company.buildanalyzer.application.context.SyntheticConsoleLog.Failure;
+import com.company.buildanalyzer.application.prompt.AnalysisLimits;
 import com.company.buildanalyzer.application.prompt.PromptBuilder;
 import com.company.buildanalyzer.application.usecase.AnalyzeBuildService;
 import com.company.buildanalyzer.domain.model.BuildAnalysisResult;
+import com.company.buildanalyzer.domain.model.FailureGroupAnalysis;
 import com.company.buildanalyzer.domain.model.LlmMetrics;
 import com.company.buildanalyzer.domain.model.RootCauseAnalysis;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -35,7 +40,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <pre>mvn test -Dtest=OpenAiLiveBuild7Test -Dopenai.live=true</pre>
  * (needs {@code OPENAI_API_KEY} in the environment). Each answer is appended, UTF-8, to
  * {@code target/live-analyses.txt} for reading. Verifies the structured answer (location from
- * the evidence, at most 3 actions, at most 10 lines) and the usage/cost numbers.
+ * the evidence, at most 3 actions, at most 10 lines) and the usage/cost numbers — and, for a synthetic
+ * build with 10 failed tests in 3 groups, that one call with the strict failure-groups schema answers every group.
  */
 @EnabledIfSystemProperty(named = "openai.live", matches = "true")
 @EnabledIfEnvironmentVariable(named = "OPENAI_API_KEY", matches = ".+")
@@ -60,7 +66,7 @@ class OpenAiLiveBuild7Test {
                 (job, build) -> consoleLog,
                 new BuildContextBuilder(new ErrorClassifier(), new RelevantLogExtractor(),
                         List.of(new SeleniumInteractionExtractor())),
-                new PromptBuilder(),
+                new PromptBuilder(new AnalysisLimits()),
                 new OpenAiProvider(liveProperties()),
                 new RootCauseParser(),
                 new RootCauseFormatter());
@@ -85,6 +91,40 @@ class OpenAiLiveBuild7Test {
                 .add(OUTPUT_USD_PER_MILLION.multiply(BigDecimal.valueOf(metrics.completionTokens())))
                 .divide(BigDecimal.valueOf(1_000_000), 6, RoundingMode.HALF_UP);
         assertThat(metrics.estimatedCostUsd()).isEqualByComparingTo(expectedCost);
+    }
+
+    /** 30 scenarios, 10 failures in 3 groups: one call with the strict FAILURE_GROUPS schema, every group answered. */
+    @Test
+    void analysesABuildWithSeveralFailuresInOneCall() throws IOException {
+        SyntheticConsoleLog log = new SyntheticConsoleLog();
+        for (int i = 1; i <= 30; i++) {
+            switch (i % 6) {
+                case 0 -> log.failed("Failing login " + i, Failure.noSuchElement("login-btn"));
+                case 3 -> log.failed("Failing payment " + i, i == 3 ? Failure.assertion("120.00", "100.00") : Failure.timeout("pay-now-btn"));
+                default -> log.passed("Passing scenario " + i);
+            }
+        }
+        String consoleLog = log.build();
+        AnalyzeBuildService service = new AnalyzeBuildService(
+                (job, build) -> consoleLog,
+                new BuildContextBuilder(new ErrorClassifier(), new RelevantLogExtractor(),
+                        List.of(new SeleniumInteractionExtractor())),
+                new PromptBuilder(new AnalysisLimits()),
+                new OpenAiProvider(liveProperties()),
+                new RootCauseParser(),
+                new RootCauseFormatter());
+
+        BuildAnalysisResult result = service.analyze("live", 2);
+        report("synthetic 30 scenarios / 10 failures", result);
+
+        assertThat(result.aiSummary()).as("model answered with parseable group JSON").isNotBlank();
+        assertThat(result.groupAnalyses()).hasSize(3).allSatisfy(group -> {
+            assertThat(group.status()).isEqualTo(FailureGroupAnalysis.Status.ANALYZED);
+            assertThat(group.actions()).hasSizeLessThanOrEqualTo(3);
+        });
+        assertThat(result.groupAnalyses().get(0).rootCause()).contains("login-btn");
+        assertThat(result.groupAnalyses().get(1).rootCause()).contains("pay-now-btn");
+        assertThat(result.aiAnalysis().lines()).hasSizeLessThanOrEqualTo(10);
     }
 
     private static void report(String log, BuildAnalysisResult result) throws IOException {

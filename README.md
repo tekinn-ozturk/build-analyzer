@@ -1,48 +1,60 @@
 # Build Analyzer
 
-> **Note for an AI assistant / new session:** this README is the single source of truth
-> for understanding the project without reading every file. It is kept in sync with the
-> code by hand. Read it fully first; only open individual files when you need to change them.
+> **Note for an AI assistant / new session:** this README is the single source of truth for understanding
+> the project without reading every file. It is kept in sync with the code by hand. Read it fully first; only
+> open individual files when you need to change them.
 
-AI-assisted **Jenkins build failure analyzer** for a Turkish-speaking QA team (about 4 users, one
-maintainer). The user pastes a **Jenkins build URL**; the app
-
-1. parses it into job path + build number,
-2. pulls the build's console log from Jenkins,
-3. distills it into a small, structured context (status, scenario, failing step, full exception
-   block, failing code location, failing UI command/locator, relevant log lines, last 200 lines),
-4. classifies the error family,
-5. builds a short, directive **Turkish** prompt (structured evidence first),
-6. asks **OpenAI GPT-5 mini** for a short root-cause analysis, and
-7. stores the analysis in **PostgreSQL**, where the history screen reads it from.
+AI-assisted **Jenkins build failure analyzer** for a Turkish-speaking QA team (about 4 users, one maintainer).
+The user pastes a **Jenkins build URL**; the app fetches the build's console log, finds out **which tests
+failed and why**, asks an LLM for a short, evidence-based root cause and concrete fixes, stores the result in
+PostgreSQL and shows it in a small web UI.
 
 ```
-Jenkins Build URL → Analyze → AI analysis → PostgreSQL → History
+Jenkins Build URL → console log → failures extracted & grouped → AI analysis → PostgreSQL → Analysis / History
 ```
 
-There are no users, projects or pipelines (removed on purpose, see [Database](#database)) and no login.
-SUCCESS builds are answered instantly without calling the LLM.
+- **One build = one analysis = one database row**, whether 1 or 500 tests failed.
+- **One LLM call per build** in the normal case — never one call per test. Several failed tests are grouped by
+  error signature first; only when the groups do not fit into one prompt are they split into a few calls
+  (at most 3 by default).
+- **SUCCESS builds** are answered instantly without calling the LLM.
+- Nothing is invented: a value the log does not show stays `null` (no guessed file, line or test count).
+- No users, projects, pipelines or login (removed on purpose, see [Database](#database)).
 
-**Guiding rule (owner's decision): keep the codebase small enough that one developer can follow a bug
-through it in 10–15 minutes.** No new layers, generic abstractions, extra endpoints or "future-proofing"
+**Guiding rule (owner's decision): keep the codebase small enough that one developer can follow a bug through it
+in 10–15 minutes.** No new layers, generic abstractions, extra endpoints, dependencies or "future-proofing"
 without a real need; backend changes are agreed with the owner first.
 
+## Contents
+- [Tech stack](#tech-stack)
+- [Running locally](#running-locally)
+- [Using the app](#using-the-app)
+- [How an analysis works](#how-an-analysis-works)
+- [API](#api)
+- [Database](#database)
+- [Frontend](#frontend)
+- [Architecture](#architecture)
+- [Package / class map](#package--class-map)
+- [Configuration](#configuration-srcmainresourcesapplicationyml)
+- [Tests](#tests)
+- [Architectural rules](#architectural-rules-keep-these)
+- [Conventions & gotchas](#conventions--gotchas)
+- [Status & roadmap](#status--roadmap)
+
 ## Tech stack
-- Java 21, Spring Boot 3.3.5, Maven, Lombok
-- Architecture: **Hexagonal (Ports & Adapters)**, **LLM-provider independent**
-- Jenkins access: Spring `RestClient` (HTTP Basic auth, credentials from environment)
-- LLM: **OpenAI Responses API** (`POST /v1/responses`), default model **`gpt-5-mini`**, called with Spring `RestClient`
-  (JDK `HttpClient` underneath). The provider sits behind the `LlmProvider` port; OpenAI is the only
-  implementation today.
-- springdoc-openapi (Swagger UI)
-- **PostgreSQL** (Spring Data JPA, schema by **Flyway**) for the analysis history — one table, see [Database](#database).
-- A small React frontend in `frontend/` (see [Frontend](#frontend)).
+- **Backend:** Java 21, Spring Boot 3.3.5, Maven, Lombok; **Hexagonal (Ports & Adapters)**, LLM-provider independent.
+- **Jenkins access:** Spring `RestClient` (HTTP Basic auth, credentials from the environment); only `consoleText` is read.
+- **LLM:** **OpenAI Responses API** (`POST /v1/responses`), default model **`gpt-5-mini`**, strict structured
+  output (JSON schema). The provider sits behind the `LlmProvider` port; OpenAI is the only implementation today.
+- **Database:** **PostgreSQL** (Spring Data JPA, schema by **Flyway**) — one table, `analyses`.
+- **Frontend:** React 19 + TypeScript + Vite + MUI 9 + React Router 8 in `frontend/` (lean V1, no state library).
+- springdoc-openapi (Swagger UI).
 
 ## Running locally
 
-Prerequisites: a Jenkins on `http://localhost:8080`, an **OpenAI API key**, a local **PostgreSQL**
-(database `build_analyzer`, user `build_analyzer_user`; PostgreSQL 18 is used) and Node.js for the frontend.
-The backend listens on **port 8090**, the frontend dev server on **5173**.
+Prerequisites: a Jenkins on `http://localhost:8080`, an **OpenAI API key**, a local **PostgreSQL** (database
+`build_analyzer`, user `build_analyzer_user`; PostgreSQL 18 is used) and Node.js for the frontend. The backend
+listens on **port 8090**, the frontend dev server on **5173**.
 
 **Everyday start:** run `BuildAnalyzerApplication` in IntelliJ (env vars below) → `cd frontend` → `npm run dev`
 → open http://localhost:5173.
@@ -58,10 +70,10 @@ Secrets come **only from environment variables** — never from `application.yml
 | `DB_URL` | no | default `jdbc:postgresql://localhost:5432/build_analyzer` |
 | `DB_USERNAME` | no | default `build_analyzer_user` |
 
-- **IntelliJ (how the app is normally run):** Run configuration `BuildAnalyzerApplication` →
-  *Edit Configurations…* → *Environment variables*:
-  `OPENAI_API_KEY=<key>;JENKINS_USERNAME=<user>;JENKINS_API_TOKEN=<token>;DB_PASSWORD=<db password>` → restart the app
-  (env is read at startup only).
+- **IntelliJ (how the app is normally run):** Run configuration `BuildAnalyzerApplication` → *Edit
+  Configurations…* → *Environment variables*:
+  `OPENAI_API_KEY=<key>;JENKINS_USERNAME=<user>;JENKINS_API_TOKEN=<token>;DB_PASSWORD=<db password>` → restart
+  the app (env is read at startup only).
 - **First start:** Flyway creates the schema; the history starts empty. Nothing has to be set up by hand.
 - **Terminal (PowerShell):**
   ```powershell
@@ -72,119 +84,213 @@ Secrets come **only from environment variables** — never from `application.yml
   mvn spring-boot:run
   ```
   (cmd.exe: `set "OPENAI_API_KEY=<key>"` etc.)
+- **Frontend:**
+  ```powershell
+  cd frontend
+  npm install
+  npm run dev      # http://localhost:5173 — /api is proxied to the backend on :8090 (no CORS needed)
+  ```
 
 An OpenAI key is created at https://platform.openai.com/api-keys. Never commit it.
 
-### Trying the endpoint
-- **Swagger UI:** http://localhost:8090/swagger-ui/index.html → `POST /api/v1/analysis/build` → *Try it out*.
-- **Postman:** `POST http://localhost:8090/api/v1/analysis/build`, Body → raw → JSON.
+**Trying the API without the UI:** Swagger UI at http://localhost:8090/swagger-ui/index.html →
+`POST /api/v1/analysis/build` → *Try it out*; or Postman `POST http://localhost:8090/api/v1/analysis/build`
+with a raw JSON body.
 
-### Tests
-`mvn test` — **149 unit tests, all green**, no external service or API key needed (OpenAI is stubbed with an
-in-process HTTP server, Jenkins is mocked, the controller test mocks the repository). Plus two opt-in groups,
-skipped by default:
-- `AnalysisRepositoryTest` (3 tests: stored columns, history list, detail without prompt) runs against the
-  **real local PostgreSQL** when `DB_PASSWORD` is set; every test is rolled back, nothing stays in the database;
-- the live OpenAI test over 4 logs (`-Dopenai.live=true`).
+## Using the app
+1. **Dashboard:** paste a Jenkins build URL (e.g. `https://jenkins.company.com/job/Team/job/UI-Test/125/`) →
+   *Analyze Build*. The URL is checked instantly (jobs inside folders of any depth are fine). While the
+   synchronous request runs (usually 3–15 s) the UI shows "Build analiz ediliyor...". The recent history is
+   listed below.
+2. **Analysis detail** (`/analyses/:id`): build number, status chip, job, analysis time, "Jenkins'te aç" link
+   and — when the log has a test summary — "Testler: 30 toplam · 20 başarılı · 10 başarısız · 0 atlanan".
+   Two tabs:
+   - **AI Analysis** — what the analysis found (see the three cases below).
+   - **Relevant Logs** — the filtered log snippet / the last 200 raw lines; the full log stays on Jenkins.
+3. **Build History** (`/history`): every analysis, newest first, Jenkins-style table.
 
-With `DB_PASSWORD` set: `Tests run: 153, Failures: 0, Errors: 0, Skipped: 1` (only the live test skipped).
-On the developer machine `DB_PASSWORD` is a **Windows user environment variable**, so `mvn test` in any newly
-opened terminal picks it up (IntelliJ's app run configuration does not pass its env vars to tests or
-terminals; restart IntelliJ after changing a Windows variable).
+What **AI Analysis** shows:
 
-Frontend: `cd frontend && npm test` — 24 Vitest tests (URL parser, response mapping, `AnalyzeForm`,
-`AiAnalysis` render rules); `npm run build` also type-checks.
+| Build | View |
+|---|---|
+| SUCCESS | green "Build başarılı. Analiz edilecek bir hata yok." (no LLM call) |
+| **one failed test**, or a non-test failure | **HATA SEBEBİ** (AI root cause) → *where*: the IDE-like view (feature file, scenario, failed step and its line, error) when the failure comes from a test, else a plain **HATA ÖZETİ** card (Maven / Jenkins / pipeline / infrastructure) → **ÇÖZÜM ÖNERİLERİ** (≤ 3 actions) |
+| **several failed tests** | **HATA SEBEBİ** = the AI's build summary + "10 başarısız test · 3 hata grubu · 2 grup AI ile ayrıntılı analiz edildi"; an info line when the runner counted more failures than the log itemised; a warning when groups were not analysed. Then **one card per failure group**: group id, exception, test count, error signature, the group's own HATA SEBEBİ / ÇÖZÜM ÖNERİLERİ (or "AI analizi yok: <reason>"), the list of affected tests — selecting one opens it in the same IDE-like view |
 
-After deleting/renaming classes run `mvn clean test` so stale `.class` files in `target/` are not picked up.
+The IDE-like view never shows a file or line the log did not have: a plain JUnit test is shown by its name only.
+UI labels are English where the spec gave them (Analyze Build, Build History, …); AI content and headings are
+Turkish (`HATA SEBEBİ`, `ÇÖZÜM ÖNERİLERİ`; the words "Kök Neden" / "Aksiyon" are not used in the UI).
 
-## Database
-
-One table, **`analyses`** — one analysed Jenkins build. Schema by Flyway (`src/main/resources/db/migration`);
-Hibernate only validates it (`ddl-auto: validate`).
-
-- `V1__init_schema.sql` created users / projects / project_members / pipelines / analyses;
-  `V2__drop_projects_and_pipelines.sql` removed everything but `analyses` (V1 product decision: no users,
-  projects or pipelines — the build URL alone identifies an analysis). Never edit an applied migration; add a new one.
-- Columns: Jenkins (`build_url, job_name, job_path, build_number, build_status`), history list
-  (`analysis_status, error_category, exception_type, headline`), result (`error_reason, result_json,
-  relevant_logs, last_200_lines`), LLM (`model, total_tokens, estimated_cost_usd`), `created_at, analyzed_at`.
-- `result_json` (TEXT, Jackson) is the analysis response without the prompt and the logs; the logs have their
-  own columns. **The prompt and the full console log are not stored** (the log stays on Jenkins).
-- `analysis_status`: `COMPLETED` · `SKIPPED` (SUCCESS build, no LLM call) · `UNSTRUCTURED` (model answer not parseable).
-- `headline` (history label): simple exception name, else the error category; "Build başarılı" for SUCCESS.
-- Every analysis is a new row — analysing the same build twice gives two rows. Failed analyses (Jenkins or
-  OpenAI error) are not stored.
-- No authentication: everybody who can reach the app sees the whole history.
-- To look at the data: pgAdmin → `build_analyzer` → `analyses`, or
-  `psql -h localhost -U build_analyzer_user -d build_analyzer` (psql is in `C:\Program Files\PostgreSQL\18\bin`).
-
-## Frontend
-
-`frontend/` — React 19, TypeScript, Vite, MUI 9, React Router 8 (backend calls with the browser's `fetch`,
-no axios). Kept deliberately small (lean V1): no Redux/Zustand/TanStack Query, state is `useState`/`useEffect`
-in the page or component; flat folders, no feature/domain/mapper layers. The long frontend design document
-written early on (kept outside the repo) is the product vision, not the implemented scope.
+## How an analysis works
 
 ```
-src/
-  api/analysisApi.ts        every backend call + toAnalysis() (backend response → what the screens show)
-  types/analysis.ts         AnalysisResponse (backend), Analysis (screens), AnalysisSummary (history row), TestContext
-  pages/                    DashboardPage (URL input + history), AnalysisPage (/analyses/:id), HistoryPage (/history)
-  components/               AnalyzeForm, HistoryList (Jenkins-style table, loads the history itself), AiAnalysis,
-                            TestContextView (IDE-like), LogViewer, StatusChip, Layout, Sidebar
-  utils/jenkinsUrl.ts       URL parser for instant form feedback (backend re-parses; JenkinsBuildUrl is authoritative)
-  utils/format.ts           date formatting
-  theme.ts                  MUI theme + monospace font
+POST /api/v1/analysis/build {buildUrl}
+  1. JenkinsBuildUrl.parse          job path (folders joined with "/") + build number      — 400 if not a build URL
+  2. Jenkins consoleText            raw bytes → ConsoleLogDecoder (UTF-8, cp1254 fallback per line)
+  3. BuildContextBuilder            status, test counts, primary failure, every failed test (grouped), log snippet, tail
+  4. SUCCESS?                       fixed message, no prompt, no LLM call
+  5. ≤ 1 failed test                single-failure prompt → 1 LLM call (RootCauseSchema.ROOT_CAUSE)
+     several failed tests           group prompt(s) → normally 1, at most 3 LLM calls (RootCauseSchema.FAILURE_GROUPS)
+  6. parse + render                 RootCauseParser / RootCauseFormatter; per-group status ANALYZED / SKIPPED / FAILED
+  7. store                          one `analyses` row (result_json) → response with the row id
 ```
 
+### 1. Reading the log (`BuildContextBuilder`)
+Extraction is string/regex matching over well-known Jenkins / Maven / BDD / stack-trace shapes; it is
+technology-neutral where it can be (no framework is required) and every field is best-effort (`null` = not found).
+
+- **Build status:** Jenkins `Finished: X` (last occurrence) wins over Maven `BUILD X`. SUCCESS → category `NONE`,
+  no error parsing at all (green logs contain harmless warnings that must not be classified).
+- **Test counts** (`TestSummaryExtractor`): the runner's own summary line — Surefire/Failsafe totals (preferred:
+  they count every test of a Maven module, Cucumber JUnit-runner scenarios included; per-class lines are skipped
+  so nothing is counted twice; several modules are added up), else Cucumber `30 Scenarios (10 failed, 20 passed)`,
+  Gradle `30 tests completed, 10 failed`, pytest `== 3 failed, 20 passed ==`, Jest `Tests: 2 failed, 28 passed,
+  30 total`. A count the format does not print stays `null` (pytest has no total).
+- **Error category** (`ErrorClassifier`): one build-level family — SELENIUM, MAVEN, CUCUMBER, JENKINS, INFRA,
+  UNKNOWN — from an ordered keyword rule list. The exception types of the single failures live in their groups,
+  not in this one field.
+- **Primary failure** (the single-failure fields: scenario, step, exception type, full exception block, first
+  application frame, failed UI interaction): the log's **first exception** — unless that exception belongs to no
+  failed test (a retry a passing scenario logged, a setup warning) while a failed test printed one: then it is
+  **the first failed test**. Used by the single-failure prompt and the flat API fields.
+- **Relevant log snippet** (`RelevantLogExtractor`): noise dropped (downloads, git, `[Pipeline]`, Maven help),
+  signal lines kept with context, markers kept alone, deduplicated, ≤ 120 lines. **Last 200 lines** kept raw.
+
+### 2. Finding every failed test (`FailureExtractor`)
+A failed test is an exception block printed inside a test's own output. A test's output starts at
+- a Gherkin scenario line — `Scenario:`, `Scenario Outline:`, `Example:`, Turkish `Senaryo:` / `Örnek:` (pretty
+  output of Cucumber or any BDD tool), or
+- a runner's per-test result header — Surefire/Failsafe `[ERROR] Example.Open Google -- Time elapsed … <<< ERROR!`
+  (2.x: `Open Google(Example)  Time elapsed …`), Gradle `LoginTest > invalidPassword() FAILED`,
+
+and ends at the next test or a run summary (`Tests run:`, `30 Scenarios (…)`, `Results:`, `BUILD …`, `Running X`).
+Exceptions outside any test (Maven, Jenkins, infrastructure, after the run) are **not** test failures.
+
+- **Which exception is the test's failure:** the error Cucumber prints **indented right under the failed step**;
+  an exception the application merely logged during the scenario does not replace it. A scenario without such an
+  error (a hook failure, or a passing scenario that logged a handled exception) counts only when something
+  confirms it failed — Cucumber's `Failed scenarios:` list or the runner's report — unless the log has neither.
+- **Printed twice:** the pretty formatter and the runner's report print the same failure (build #7 prints it
+  three times). A report is that scenario again when its name is the scenario's name — `Example.Open Google`,
+  `Login.Login with user #2` (repeated names), `Open Google(Example)` — or, failing that, when it carries the same
+  error. One report per scenario, so outline rows with one name are still counted apart.
+- **Reruns:** a scenario printed again at the same location, or a report repeated under the same name
+  (Surefire `rerunFailingTestsCount`), counts once — the last run. Tests Surefire lists under `Flakes:` (failed,
+  then passed on rerun) are not failures.
+- **`Failed scenarios:` list** (when present) decides which scenarios failed; a listed scenario without a
+  printed exception is kept with `null` exception fields. List entries are URL-decoded (`Odeme%20akisi.feature`).
+- **Per failure:** scenario / test name, failed step (text, feature file, line — from Cucumber's
+  `at ✽.<step>(…feature:N)` pseudo-frame or the pretty step line, never a step of another test), exception type,
+  first message line (REST-assured's "1 expectation failed." gets its next line too), full exception block,
+  first application frame (`File.java:line`, also Gradle's `at app//…` frames), failed UI interaction
+  (Selenium command + locator), and a few lines logged right after the exception (`logExcerpt`, e.g. a response
+  body; stops at the next scenario's tags).
+- Exception headers are whole fully-qualified `…Exception` / `…Error` / `…Failure` tokens (JUnit 4's
+  `ComparisonFailure` included) — never part of a class name such as `GlobalExceptionHandlerTest` or
+  `LoginErrorSteps`. ANSI colour codes and Windows line endings are handled. Failures are kept in log order.
+
+### 3. Grouping (`FailureGrouper`)
+Failed tests with the same **error signature** form one group:
+
 ```
-cd frontend
-npm install
-npm run dev      # http://localhost:5173 — /api is proxied to the backend on :8090 (no CORS needed)
-npm test         # Vitest: URL parser, response mapping, AnalyzeForm, AiAnalysis render rules
-npm run build    # type check + production bundle in frontend/dist
+exception type + ": " + first message line (run-specific values masked) + " @ " + failure location
+org.openqa.selenium.NoSuchElementException: no such element: … #login-btn … @ stepdefinitions.LoginSteps.clickLogin(LoginSteps.java:31)
 ```
 
-Flow: `DashboardPage` (URL → `AnalyzeForm` → "Build analiz ediliyor..." → `POST /api/v1/analysis/build`) →
-`AnalysisPage` (`/analyses/:id` → `GET /api/v1/analyses/{id}`, tabs AI Analysis / Relevant Logs) ·
-`HistoryList` (`GET /api/v1/analyses`) on the dashboard and on `/history`.
+- Masked are only values that differ between two runs of the same error: session ids, UUIDs, timestamps, ports,
+  object hashes, numbers of 10+ digits. Locators, status codes and expected/actual values are kept.
+- The location is the first application frame, else the failing step — so the **same exception type at another
+  place, or with another message, is another group**. The same type alone is never taken as the same cause.
+- Groups are numbered `G1, G2, …`, largest first, then in log order. The first test of a group is its
+  **representative**: its evidence goes to the LLM and its full stack trace is stored once.
+- Failures without any exception share one group: "Logda exception / stack trace yok".
 
-- Detail header: Build #, status chip, `Job:` (Jenkins full name), analysis date, "Jenkins'te aç" link.
-- **AI Analysis** = **Hata Sebebi** (`rootCauseAnalysis.rootCause`) → where it failed → **Çözüm Önerileri**
-  (`actions`). SUCCESS build → green "Build başarılı" message. Unparseable model answer → the raw `aiAnalysis`
-  text as the cause. (The words "Kök Neden" / "Aksiyon" are not used in the UI.)
-- **Relevant Logs** tab: `relevantLogSnippet` / "Last 200 Lines" toggle; the full log stays on Jenkins (link).
-- The analyze action shows "Build analiz ediliyor..." with an indeterminate progress bar while the
-  synchronous POST runs (3–10 s); there are no real progress events.
-- UI labels are English where the spec gave them (Analyze Build, Build History, …), AI content is Turkish.
-  `index.html` uses `lang="en"` on purpose: with `tr`, MUI's upper-casing turns "Build" into "BUİLD";
-  Turkish headings are written in upper case in the source ("HATA SEBEBİ").
-- **The only render rule for "where" is `testContext`** (`types/analysis.ts`): not null → IDE-like view
-  (`TestContextView`: feature file, scenario, failed step and its line); null → plain error summary card
-  (Maven / Jenkins / pipeline / infrastructure failures). The frontend knows no test framework; every
-  `testContext` field is optional. The backend sets it when the log shows a failing scenario or step.
-- The URL parser (`utils/jenkinsUrl.ts`) supports nested folders: `/job/Team/job/UI-Test/125/` → `Team/UI-Test`.
+### 4. Asking the LLM
+**At most one failed test** → the **single-failure prompt** (Turkish, short and directive):
+1. role: a Jenkins build-failure **decision-support system**, not a report writer — answer "Neden patladı?
+   Nerede patladı? Ne yapmalıyım?" in ten seconds; source priority and anti-speculation rules;
+2. `=== 1. YAPISAL KANIT ===` — one `- Etiket: değer` line per **non-null** fact (Build Durumu, Hata Kategorisi,
+   Test Özeti, Senaryo, Başarısız Adım, Step Definition, Hata Dosyası:Satırı, Exception, Otomasyon Aracı,
+   Başarısız Komut, Locator Tipi/Değeri, Kod Dili) + the full stack trace — the primary source;
+3. `=== 2. İLGİLİ LOG KESİTİ ===` — secondary; `=== 3. JENKINS LOG — SON 200 SATIR ===` — supporting only
+   (lines over 500 chars clipped);
+4. the JSON answer format, last: `{"rootCause", "file", "line", "method", "actions"}` (strict schema).
+
+Build #7's prompt is ~20k chars (~6k tokens).
+
+**Several failed tests** → **group prompt(s)** (`PromptBuilder.buildGroupPrompts`):
+- the build summary (status, category, test counts, failed tests found / groups), an index line for **every**
+  group, then — per group in this request — its signature, the representative's facts (step, step definition,
+  file:line, exception, UI interaction), the **counted** list of affected tests (≤ 10 names + "… ve N test daha";
+  the count is always complete), **one** representative stack trace (≤ 40 lines) and its log excerpt;
+- passed tests are only counted, never listed; no build-wide snippet or raw tail (in a big run those are mostly
+  passed scenarios);
+- extra rules: the counts and test lists come from the application and must not be changed; the same exception
+  type is not the same cause; a common cause is stated only if the evidence shows it, otherwise the model must
+  say it cannot be proven; missing evidence is said, not filled;
+- answer: `{"summary": "...", "groups": [{"id": "G1", "rootCause": "...", "actions": ["..."]}]}`
+  (`RootCauseSchema.FAILURE_GROUPS`, strict) — `rootCause` ≤ 3 sentences (what happened, under which condition,
+  on which evidence), ≤ 3 prioritised actions.
+
+**Call budget** (`analysis.*`, see [Configuration](#configuration-srcmainresourcesapplicationyml)): groups are
+packed into one prompt while it stays within `max-prompt-chars` (60 000) and `max-groups-per-call` (6); at most
+`max-llm-calls` (3) prompts are made. A normal build needs **one** call. Every field that can grow is clipped
+(signature, facts, trace lines, log lines), so a prompt stays bounded however big a log is. The limits are
+character counts — no token estimate is claimed.
+
+**Per-group status** (`FailureGroupAnalysis`): `ANALYZED`; `SKIPPED` — over the call limit, not sent (still
+listed with all its tests); `FAILED` — the call failed, the answer was unreadable or had nothing for the group,
+or (single-failure build) the prompt's evidence was another exception. Every non-analysed group carries an
+`aiNote`. A failed call loses only its own groups; only when **no** call gets through does the analysis fail
+(502, nothing stored). Metrics are the sum of the answered calls (a failed call reports no usage).
+
+**Credentials are masked in every prompt** before it leaves the application: `password=` / `-Dtoken: x` /
+`DB_PASSWORD=` / `x-api-key:` values, JSON fields named like credentials (also escaped `\"password\":\"…\"`),
+`Authorization: Basic|Bearer …` (also `Authorization=Basic …` of REST-assured logs), bare long bearer tokens,
+`user:password@` in URLs, `curl -u user:password`, Gherkin key/value rows `| password | … |`. Not masked: empty
+values, `name:value` without a space (`LoginTest.invalidPassword:57` keeps its line number), CSS selectors such as
+`#password:focus`. A JSON field named like a credential is masked even when it holds a validation message.
+
+### 5. Answer handling and output format
+- `RootCauseParser` tolerates a ```` ```json ```` fence or text around the object and normalises values: file name
+  only (path/package/`:line` removed), simple method name, `line <= 0` → `null`, list markers stripped, ≤ 3
+  actions, one line per value. `RootCauseAnalysis.withFallbackLocation` fills a missing file/line/method from the
+  parser's evidence. An unparseable answer is shown as-is. `parseGroups` drops groups without id or root cause
+  (the service reports them as unanswered); unknown ids are ignored.
+- `RootCauseFormatter` renders the ready-to-show `aiAnalysis` text, **at most 10 lines**:
+  ```
+  🚨 KÖK NEDEN                              🚨 BUILD ÖZETİ
+  name=qqqqqqqq locator'ı bulunamadı; …      10 başarısız testin 5'i #login-btn …
+  📍 KONUM                                   🧩 HATA GRUPLARI
+  ExampleSteps.java:28                      - G1 (5 test): #login-btn bulunamadı …
+  clickSearchBox()                          - G2 (4 test): pay-now-btn 10 sn içinde …
+  ✅ AKSİYON                                 - G3 (1 test): AI analizi yok (…)
+  - ExampleSteps.java:28'deki locator'ı …
+  ```
+- **Output philosophy:** users (QA Engineer, QA Lead, SDET, Developer, Team Lead) must answer *"Neden patladı?
+  Nerede patladı? Ne yapmalıyım?"* in about ten seconds. No technical-explanation section, no tutorials
+  ("Selenium nedir"), no speculation the evidence does not show ("iframe olabilir", "cache", "wait eklenmeli"),
+  a specific root cause ("name=qqqqqqqq locator'ı bulunamadı", not "Element bulunamadı"), actions derived from the
+  evidence, no confidence level (dropped by product decision).
+- **Measured on 2026-09-27** (gpt-5-mini, `OpenAiLiveBuild7Test`): build #7 plus three synthetic sample logs gave
+  the right file:line, a specific Turkish root cause and 2–3 actions in 3–6 s for $0.0011–0.0026 each. Weak spot:
+  a third action is sometimes generic.
 
 ## API
 
-`POST /api/v1/analysis/build`
-
-```json
-{ "buildUrl": "http://localhost:8080/job/Mini-UI-Automation/7/" }
-```
-`buildUrl` is parsed by `domain/model/JenkinsBuildUrl` into the job path (Jenkins full name, folders joined
-with "/": `/job/Team/job/UI-Test/125/` → `Team/UI-Test`) and the build number; trailing parts like `/console`
-are ignored. Blank → 400; not a Jenkins build URL (no `/job/<name>/<number>/`, Blue Ocean, `lastFailedBuild`)
-→ **400 before anything runs**. The log is always fetched from the configured `JENKINS_URL`; the URL's host is
-not used for that. The analysis is stored and returned with its `id`.
-
 | Endpoint | Returns |
 |---|---|
-| `POST /api/v1/analysis/build` | runs + stores the analysis; the response below (with `generatedPrompt`) |
-| `GET /api/v1/analyses` | the history, newest first: `id, jobName, jobPath, buildNumber, buildUrl, buildStatus, analysisStatus, errorCategory, headline, analyzedAt` (no logs) |
-| `GET /api/v1/analyses/{id}` | one stored analysis in the same shape as the POST response, **without `generatedPrompt`** (not stored); 404 if missing |
+| `POST /api/v1/analysis/build` `{"buildUrl": "..."}` | runs + stores the analysis; the response below, **with** `generatedPrompt` |
+| `GET /api/v1/analyses` | the history, newest first: `id, jobName, jobPath, buildNumber, buildUrl, buildStatus, analysisStatus, errorCategory, headline, analyzedAt` (no logs, no `result_json`) |
+| `GET /api/v1/analyses/{id}` | one stored analysis in the same shape as the POST response, **without** `generatedPrompt` (never stored); 404 if missing |
 
-Response for the real failing build #7 (long values shortened; usage values from a real run on 2026-09-27):
+`buildUrl` is parsed by `domain/model/JenkinsBuildUrl`: `/job/Team/job/UI-Test/125/` → job `Team/UI-Test`, build
+`125`; trailing parts like `/console`, query and fragment are ignored; a context path and port are kept. Blank →
+400; not a Jenkins build URL (no `/job/<name>/<number>/`, Blue Ocean, `lastFailedBuild`, multibranch names with
+`/`) → **400 before anything runs**. The log is always fetched from the configured `JENKINS_URL`; the URL's host is
+not used for that.
+
+Response for the real failing build #7 (long values shortened):
 ```json
 {
   "id": 1,
@@ -192,7 +298,6 @@ Response for the real failing build #7 (long values shortened; usage values from
   "buildNumber": 7,
   "buildUrl": "http://localhost:8080/job/Mini-UI-Automation/7/",
   "analyzedAt": "2026-10-04T09:42:00Z",
-  "testContext": { "scenario": "Open Google", "step": "Arama kutusuna tıkla.", "featureFile": "src/test/resources/features/Example.feature", "featureLine": 6 },
   "buildStatus": "FAILURE",
   "failedScenario": "Open Google",
   "featureFile": "src/test/resources/features/Example.feature",
@@ -208,18 +313,20 @@ Response for the real failing build #7 (long values shortened; usage values from
   "failedCommand": "findElement",
   "locatorType": "name",
   "locatorValue": "qqqqqqqq",
-  "stackTrace": "org.openqa.selenium.NoSuchElementException: no such element ... Build info ... Driver info ... Command ... Capabilities ... Session ID ... at ...",
+  "stackTrace": "org.openqa.selenium.NoSuchElementException: no such element ... Session ID ... at ...",
   "relevantLogSnippet": "Scenario: Open Google ... * Arama kutusuna tıkla. ... [INFO] BUILD FAILURE ... Finished: FAILURE",
   "last200Lines": "<raw log tail>",
   "generatedPrompt": "Sen bir Jenkins build hatası karar destek sistemisin. ...",
-  "aiAnalysis": "🚨 KÖK NEDEN\nname=qqqqqqqq locator'ı bulunamadı; org.openqa.selenium.NoSuchElementException atıldı.\n📍 KONUM\nExampleSteps.java:28\nclickSearchBox()\n✅ AKSİYON\n- ExampleSteps.java satır 28'deki findElement(using=name, value=qqqqqqqq) locator değerini düzelt.\n- ...",
+  "aiAnalysis": "🚨 KÖK NEDEN\nname=qqqqqqqq locator'ı bulunamadı; ...\n📍 KONUM\nExampleSteps.java:28\nclickSearchBox()\n✅ AKSİYON\n- ...",
   "rootCauseAnalysis": {
     "rootCause": "name=qqqqqqqq locator'ı bulunamadı; org.openqa.selenium.NoSuchElementException atıldı.",
-    "file": "ExampleSteps.java",
-    "line": 28,
-    "method": "clickSearchBox",
-    "actions": ["ExampleSteps.java satır 28'deki findElement(using=name, value=qqqqqqqq) locator değerini düzelt.", "..."]
+    "file": "ExampleSteps.java", "line": 28, "method": "clickSearchBox",
+    "actions": ["ExampleSteps.java satır 28'deki findElement(using=name, value=qqqqqqqq) locator değerini düzelt."]
   },
+  "testContext": { "scenario": "Open Google", "step": "Arama kutusuna tıkla.", "featureFile": "src/test/resources/features/Example.feature", "featureLine": 6 },
+  "testSummary": { "total": 1, "passed": 0, "failed": 1, "skipped": 0 },
+  "aiSummary": null,
+  "failureGroups": [{ "id": "G1", "failureCount": 1, "aiStatus": "ANALYZED", "...": "see below" }],
   "provider": "OPENAI",
   "model": "gpt-5-mini-2025-08-07",
   "promptTokens": 5880,
@@ -230,100 +337,143 @@ Response for the real failing build #7 (long values shortened; usage values from
 }
 ```
 
+A build with **several failed tests** additionally fills `aiSummary` and one entry per group (and has
+`rootCauseAnalysis: null`; `aiAnalysis` is the 🚨 BUILD ÖZETİ / 🧩 HATA GRUPLARI text):
+```json
+"testSummary": { "total": 30, "passed": 20, "failed": 10, "skipped": 0 },
+"aiSummary": "10 başarısız testin 5'i #login-btn ...; gruplar arasında ortak bir neden kanıtlanamadı.",
+"failureGroups": [{
+  "id": "G1",
+  "signature": "org.openqa.selenium.NoSuchElementException: no such element: ... @ stepdefinitions.LoginSteps.clickLogin(LoginSteps.java:31)",
+  "failureCount": 5,
+  "exceptionType": "org.openqa.selenium.NoSuchElementException", "message": "no such element: ...",
+  "exceptionFile": "LoginSteps.java", "exceptionLine": 31,
+  "stackTrace": "<the representative's full exception block>", "logExcerpt": null,
+  "aiStatus": "ANALYZED", "rootCause": "...", "actions": ["..."], "aiNote": null,
+  "failures": [{
+    "testContext": { "scenario": "Hatalı giriş 6", "step": "Giriş butonuna tıkla.", "featureFile": "src/test/resources/features/Shop.feature", "featureLine": 30 },
+    "exceptionType": "org.openqa.selenium.NoSuchElementException", "message": "no such element: ...",
+    "exceptionFile": "LoginSteps.java", "exceptionLine": 31
+  }]
+}]
+```
+
+Field notes:
 - Every extracted field is best-effort: `null` means "not found", never a guess.
-- `aiAnalysis` is the short, ready-to-show text (format below), rendered by the backend from the model's
-  JSON answer. `rootCauseAnalysis` carries the same content as fields for clients that render it
-  themselves. If the model's answer cannot be parsed, `aiAnalysis` is the raw answer and
-  `rootCauseAnalysis` is `null`.
-- `model` is what OpenAI reports (a dated snapshot of the configured model).
-- `promptTokens` / `completionTokens` / `totalTokens` are the Responses API's `input_tokens` / `output_tokens` / `total_tokens`; `completionTokens` includes GPT-5's hidden reasoning tokens (billed as output).
-- `estimatedCostUsd` = promptTokens × input price + completionTokens × output price (configured list
-  prices per 1M tokens, 6 decimals). Cached-input discounts are ignored, so it is an upper estimate.
-- `responseTimeMs` is the wall-clock time of the LLM call only (not the Jenkins fetch).
-- **SUCCESS build:** no prompt is built and the LLM is not called — `errorCategory` = `NONE`,
-  error fields, `testContext`, `rootCauseAnalysis` and all usage fields = `null`, no `generatedPrompt` key,
-  `aiAnalysis` = "Build başarıyla tamamlandı. Analiz gerektiren bir hata tespit edilmedi."
-- `testContext` is set when the log shows a failing scenario or step (`scenario`, `step`, `featureFile`,
-  `featureLine` = line of the step); `null` for Maven / Jenkins / infrastructure failures. The frontend's
-  only rule for "IDE view or plain error card".
-- `generatedPrompt` has `@JsonInclude(NON_NULL)`: present in a POST response after an LLM call, absent
-  (no key at all) in GET responses and for SUCCESS builds.
-- **Errors:** 400 validation; Jenkins non-2xx → same status (e.g. 401/403 = bad/missing credentials,
-  404 = no such job/build); Jenkins unreachable → 502; OpenAI unreachable / timeout / non-2xx (e.g. 401
-  wrong key, 429 rate limit/quota) / empty or refused answer → 502 `{"error": "AI analysis failed: ..."}`.
+- The flat single-failure fields (`failedScenario` … `stackTrace`) describe the build's **primary** failure.
+- `testContext` (scenario, step, featureFile, featureLine = line of the step) is set when the failure comes from a
+  test; `null` for Maven / Jenkins / infrastructure failures — the frontend's only rule for "IDE view or plain
+  error card". Each entry of `failureGroups[].failures` carries its own `testContext`.
+- `testSummary` is `null` when the log has no summary line; a single count is `null` when the format does not
+  print it.
+- `failureGroups` is `[]` when no failed test was found and for analyses stored before multi-failure support.
+  Only the representative's stack trace and log excerpt are kept (per group), not one per failed test.
+- `aiStatus`: `ANALYZED` / `SKIPPED` / `FAILED`, with the reason in `aiNote` (see [Asking the LLM](#4-asking-the-llm)).
+- `generatedPrompt` has `@JsonInclude(NON_NULL)`: present in a POST response after an LLM call (all prompts, if
+  there were several calls), absent in GET responses and for SUCCESS builds.
+- `model` is what OpenAI reports (a dated snapshot). `promptTokens` / `completionTokens` / `totalTokens` are the
+  Responses API's `input_tokens` / `output_tokens` / `total_tokens` — output includes GPT-5's hidden reasoning
+  tokens — summed over the answered calls. `estimatedCostUsd` = tokens × the configured list prices (6 decimals;
+  cached-input discounts ignored, so an upper estimate; calls that failed are not included). `responseTimeMs` is
+  the LLM time only.
+- **SUCCESS build:** no prompt, no LLM call — `errorCategory` = `NONE`, error fields, `testContext`,
+  `rootCauseAnalysis` and usage fields `null`, `failureGroups` `[]`, `aiAnalysis` = "Build başarıyla tamamlandı.
+  Analiz gerektiren bir hata tespit edilmedi."; `testSummary` is still read.
+- **Errors:** 400 validation / not a build URL; Jenkins non-2xx → same status (401/403 = bad or missing
+  credentials, 404 = no such job/build); Jenkins unreachable → 502; OpenAI unreachable / timeout / non-2xx
+  (401 wrong key, 429 rate limit or quota) / empty or refused answer → 502 `{"error": "AI analysis failed: ..."}`.
+  Failed analyses are not stored.
 
-### Output philosophy and format
-Users (QA Engineer, QA Lead, SDET, Developer, Team Lead) must answer *"Neden patladı? Nerede patladı?
-Ne yapmalıyım?"* in ~10 seconds. The model acts as a **decision-support system, not a report writer**:
-no technical explanation section, no tutorials ("Selenium nedir"), no speculation the evidence does not
-show ("iframe olabilir", "cache", "wait eklenmeli"), a specific root cause ("name=qqqqqqqq locator'ı
-bulunamadı", not "Element bulunamadı"), actions derived directly from the evidence. No confidence level
-(dropped by product decision).
+## Database
 
-1. The model answers **JSON only**, enforced by the provider (OpenAI: strict structured output):
-   ```json
-   {"rootCause": "...", "file": "ExampleSteps.java", "line": 28, "method": "clickSearchBox", "actions": ["..."]}
-   ```
-   Unknown location parts are `null`.
-2. `RootCauseParser` normalises it (file name only — path/package/`:line` removed; simple method name;
-   ≤ 3 non-blank actions; one line per value) and `RootCauseAnalysis.withFallbackLocation` fills a missing
-   file/line/method from the parser's evidence.
-3. `RootCauseFormatter` renders it — **at most 10 lines** (at most 9 in practice); sections with nothing
-   proven are omitted:
-   ```
-   🚨 KÖK NEDEN
-   name=qqqqqqqq locator'ı bulunamadı; org.openqa.selenium.NoSuchElementException atıldı.
-   📍 KONUM
-   ExampleSteps.java:28
-   clickSearchBox()
-   ✅ AKSİYON
-   - ExampleSteps.java satır 28'deki findElement(using=name, value=qqqqqqqq) locator değerini düzelt.
-   - stepdefinitions.ExampleSteps.clickSearchBox metotunda kullanılan name locator'ı geçerli name değeriyle güncelle.
-   ```
+One table, **`analyses`** — one analysed Jenkins build. Schema by Flyway (`src/main/resources/db/migration`);
+Hibernate only validates it (`ddl-auto: validate`).
 
-**Measured on 2026-09-27** (gpt-5-mini, `OpenAiLiveBuild7Test`): build #7 plus three synthetic sample logs
-(`src/test/resources/logs/samples/`: Selenium timeout, REST assertion 201≠500, Maven compile error). All four
-gave the right file:line, a specific root cause in Turkish, 2–3 actions, no speculation; 3–6 s and
-$0.0011–0.0026 per analysis. Weak spot: a third action is sometimes generic ("… kontrol et").
+- `V1__init_schema.sql` created users / projects / project_members / pipelines / analyses;
+  `V2__drop_projects_and_pipelines.sql` removed everything but `analyses` (product decision: the build URL alone
+  identifies an analysis). **Never edit an applied migration; add a new one (`V3__…`).**
+- Columns: Jenkins (`build_url, job_name, job_path, build_number, build_status`), history list
+  (`analysis_status, error_category, exception_type, headline`), result (`error_reason, result_json, relevant_logs,
+  last_200_lines`), LLM (`model, total_tokens, estimated_cost_usd`), `created_at, analyzed_at`.
+- `result_json` (TEXT, Jackson) is the analysis response without the prompt, the logs and the header fields (they
+  have their own columns) — including `testSummary`, `aiSummary` and every failure group with every failed test.
+  **The prompt and the full console log are never stored** (the log stays on Jenkins).
+- `analysis_status`: `COMPLETED` · `SKIPPED` (SUCCESS build, no LLM call) · `UNSTRUCTURED` (no usable model answer) ·
+  `PARTIAL` (some failure groups have no AI answer — over the call limit, a failed call, or evidence not sent).
+- `headline` (history label): simple exception name, else the error category; "Build başarılı" for SUCCESS;
+  "10 başarısız test, 3 hata grubu" for several failed tests. `exception_type` is the primary failure's type.
+- `error_reason`: the root cause, the build summary, or the raw answer.
+- Every analysis is a new row — analysing the same build twice gives two rows. No authentication: everybody who
+  can reach the app sees the whole history.
+- To look at the data: pgAdmin → `build_analyzer` → `analyses`, or
+  `psql -h localhost -U build_analyzer_user -d build_analyzer` (psql is in `C:\Program Files\PostgreSQL\18\bin`).
 
-## How a request flows
+## Frontend
+
+`frontend/` — React 19, TypeScript, Vite, MUI 9, React Router 8; backend calls with the browser's `fetch`.
+Deliberately small (lean V1): no Redux/Zustand/TanStack Query — state is `useState`/`useEffect` in the page or
+component; flat folders, no feature/domain/mapper layers. The long frontend design document written early on
+(kept outside the repo) is the product vision, not the implemented scope.
+
+```
+src/
+  api/analysisApi.ts        every backend call + toAnalysis() (backend response → what the screens show)
+  types/analysis.ts         AnalysisResponse (backend), Analysis (screens), AnalysisSummary (history row),
+                            TestContext, TestSummary, FailureGroup, TestFailure
+  pages/                    DashboardPage (URL input + history), AnalysisPage (/analyses/:id), HistoryPage (/history)
+  components/               AnalyzeForm, HistoryList, AiAnalysis (single view + failure-group cards),
+                            TestContextView (IDE-like), LogViewer, StatusChip, Layout, Sidebar
+  utils/jenkinsUrl.ts       URL parser for instant form feedback (the backend re-parses; JenkinsBuildUrl is authoritative)
+  utils/format.ts           date, test-summary and type-name formatting
+  theme.ts                  MUI theme + monospace font
+```
+
+```
+npm run dev      # http://localhost:5173, /api proxied to :8090
+npm test         # Vitest
+npm run build    # type check + production bundle in frontend/dist
+```
+
+- Flow: `DashboardPage` (URL → `AnalyzeForm` → `POST /api/v1/analysis/build`) → `AnalysisPage`
+  (`GET /api/v1/analyses/{id}`, tabs AI Analysis / Relevant Logs) · `HistoryList` (`GET /api/v1/analyses`).
+- **Render rules:** `ai === null` → success message. More than one failed test in `failureGroups` → build
+  summary + group cards. Otherwise `testContext` decides: not null → IDE-like view, null → HATA ÖZETİ card. The
+  frontend knows no test framework; every `testContext` field is optional.
+- A group card's test list is a real list (`ul > li > button`); the selected test opens in `TestContextView`.
+  Cards are keyed by analysis id + group id, so another analysis starts with its own first test selected.
+- `index.html` uses `lang="en"` on purpose: with `tr`, MUI's upper-casing turns "Build" into "BUİLD"; Turkish
+  headings are written in upper case in the source ("HATA SEBEBİ").
+
+## Architecture
+
+Hexagonal (Ports & Adapters): **infrastructure → application → domain**, the domain imports nothing
+framework-related, the application never imports `infrastructure.*` (enforced by `ArchitectureBoundaryTest`).
 
 ```
 POST /api/v1/analysis/build
-  → BuildAnalysisController
-    → JenkinsBuildUrl.parse(buildUrl) → job path + build number   (400 if not a Jenkins build URL)
-    → AnalyzeBuildUseCase (impl: AnalyzeBuildService)
-        → BuildSourcePort (out) → JenkinsBuildSourceAdapter → JenkinsHttpClient
-              → GET /job/{job}/{build}/consoleText  (raw bytes → ConsoleLogDecoder)
+  → BuildAnalysisController (api)
+    → JenkinsBuildUrl.parse(buildUrl)                                              (domain; 400 if invalid)
+    → AnalyzeBuildUseCase → AnalyzeBuildService (application)
+        → BuildSourcePort → JenkinsBuildSourceAdapter → JenkinsHttpClient → GET /job/{a}/job/{b}/{n}/consoleText
         → BuildContextBuilder → BuildAnalysisContext (domain)
-              1. build status        (SUCCESS → category NONE, stop here)
-              2. ExceptionBlockExtractor   exception type, FULL exception block, first application frame
-              3. ScenarioExtractor         failing scenario (clean name, feature file, line)
-              4. StepExtractor             failing step (text, feature file, line)
-              5. InteractionExtractor[]    failing UI command + locator (Selenium, ...)
-              6. ErrorClassifier           error category
-              7. RelevantLogExtractor      relevant log snippet (noise removed)
-              8. last 200 raw lines
-        → SUCCESS? → fixed message, no prompt, no LLM call
-        → PromptBuilder → prompt (Turkish: rules → evidence → snippet → last 200 lines → JSON answer format)
-        → LlmProvider (out port) → OpenAiProvider → RestClient → POST {openai.url}/responses  [LlmRequest: prompt + RootCauseSchema]
-              ← LlmCompletion (JSON text, provider, model, tokens, estimated cost)
-        → measures the call → LlmMetrics
-        → RootCauseParser (JSON → RootCauseAnalysis, normalised) → withFallbackLocation(evidence)
-        → RootCauseFormatter → aiAnalysis (🚨 KÖK NEDEN / 📍 KONUM / ✅ AKSİYON, ≤ 10 lines)
-        → BuildAnalysisResult (domain: context + prompt + aiAnalysis + rootCauseAnalysis + llmMetrics)
-    → BuildAnalysisResponseMapper.toEntity → AnalysisRepository.save → PostgreSQL (analyses)
-    → BuildAnalysisResponseMapper.toResponse → AnalyzeBuildResponse (DTO, flattened, with the stored id)
+              status · TestSummaryExtractor · ExceptionBlockExtractor · ScenarioExtractor · StepExtractor
+              · InteractionExtractor[] · ErrorClassifier · RelevantLogExtractor · tail
+              · FailureExtractor → FailureGrouper (every failed test, grouped)
+        → SUCCESS → fixed message
+        → ≤ 1 failed test → PromptBuilder.build → LlmProvider [ROOT_CAUSE] → RootCauseParser → RootCauseFormatter
+        → several → PromptBuilder.buildGroupPrompts → LlmProvider [FAILURE_GROUPS] × ≤ 3 → parseGroups → formatGroups
+        → BuildAnalysisResult (context, prompt(s), aiAnalysis, rootCauseAnalysis, llmMetrics, aiSummary, groupAnalyses)
+    → BuildAnalysisResponseMapper.toEntity → AnalysisRepository.save → PostgreSQL
+    → BuildAnalysisResponseMapper.toResponse → AnalyzeBuildResponse (DTO, with the stored id)
 
-GET /api/v1/analyses        → AnalysisRepository.findAllByOrderByAnalyzedAtDesc()  (list columns only)
-GET /api/v1/analyses/{id}   → AnalysisRepository.findById(id) → mapper.toResponse(entity)  (404 if missing)
+GET /api/v1/analyses       → AnalysisRepository.findAllByOrderByAnalyzedAtDesc()  (Summary projection)
+GET /api/v1/analyses/{id}  → AnalysisRepository.findById → mapper.toResponse(entity)  (404 if missing)
 ```
 
-The analysis core (`application`, `domain`) does not know the database; storing happens in the controller
-after `AnalyzeBuildService` returns.
+The analysis core (`application`, `domain`) does not know the database; storing happens in the controller after
+`AnalyzeBuildService` returns.
 
-## LLM provider architecture
-
+**LLM provider independence:**
 ```
 application (knows only the port)          infrastructure (one adapter per provider)
 ┌──────────────────────────────┐           ┌──────────────────────────────────────────┐
@@ -334,18 +484,15 @@ application (knows only the port)          infrastructure (one adapter per provi
 └──────────────────────────────┘           │ llm/TokenPricing (shared cost estimate)  │
                                            └──────────────────────────────────────────┘
 ```
-
-- `llm.provider` (`LLM_PROVIDER`, default `OPENAI`, case-insensitive) selects the adapter. Exactly one
-  `LlmProvider` bean exists; an inactive provider's properties (API key) are neither bound nor required.
-- Application, domain and API never import a provider; `ArchitectureBoundaryTest` enforces this.
-- **Adding a provider (e.g. Anthropic, or Ollama again)** = one new package
-  `infrastructure/llm/<provider>/` with:
-  1. `<Provider>Provider implements LlmProvider` — calls the API, returns `LlmCompletion`, wraps every
-     transport error in `LlmAnalysisException` (never let `RestClientResponseException` escape: the API
-     layer maps that type to Jenkins errors);
+- `llm.provider` (`LLM_PROVIDER`, default `OPENAI`) selects the adapter; exactly one `LlmProvider` bean exists; an
+  inactive provider's properties are neither bound nor required.
+- **Adding a provider** (e.g. Anthropic, or Ollama again) = one package `infrastructure/llm/<provider>/`:
+  1. `<Provider>Provider implements LlmProvider` — returns `LlmCompletion`, wraps every transport error in
+     `LlmAnalysisException` (never let `RestClientResponseException` escape: the API layer maps that type to Jenkins
+     errors) and enforces `LlmRequest.responseSchema` its own way;
   2. `<Provider>Properties` (`@ConfigurationProperties("<provider>")`, `@Validated`, key from env only);
   3. `<Provider>Configuration` — `@ConditionalOnProperty(prefix = "llm", name = "provider", havingValue = "<NAME>")`
-     + `@EnableConfigurationProperties`, declares the provider bean;
+     + `@EnableConfigurationProperties`, declares the bean;
   4. a `<provider>:` block in `application.yml` and an adapter test with an in-process HTTP stub.
   Nothing in application, domain, api or `PromptBuilder` changes.
 
@@ -353,179 +500,103 @@ application (knows only the port)          infrastructure (one adapter per provi
 Base package: `com.company.buildanalyzer`
 
 ### domain (pure Java — no Spring, no framework imports)
-- `model/BuildAnalysisContext` — record: buildStatus, `FailedScenario failedScenario`,
-  `FailedStep failedStep`, exceptionType, `ErrorCategory errorCategory`, stackTrace (full block),
-  `FailureLocation failureLocation`, `FailedInteraction failedInteraction`,
-  relevantLogSnippet (LLM's secondary source), last200Lines (raw tail, LLM's supporting context).
-  `isSuccessful()` / static `isSuccessStatus(String)` is the single source of truth for
-  "SUCCESS, no analysis needed".
-- `model/FailedScenario` — name, featureFile, featureLine. E.g. `Open Google`, `src/test/resources/features/Example.feature`, `4`.
-- `model/FailedStep` — text, featureFile, featureLine. E.g. `Arama kutusuna tıkla.`, `Example.feature`, `6`.
-- `model/FailureLocation` — stepDefinition, file, line. E.g. `stepdefinitions.ExampleSteps.clickSearchBox`, `ExampleSteps.java`, `28`.
-- `model/FailedInteraction` — tool-neutral "command against a target": tool, command, locatorType,
-  locatorValue. E.g. `Selenium`, `findElement`, `name`, `qqqqqqqq`
-  (Playwright would be `toBeVisible` + `getByRole` ..., Cypress `get` + `#submit`).
-- `model/LlmMetrics` — provider, model, promptTokens, completionTokens, totalTokens, responseTimeMs,
-  estimatedCostUsd (`BigDecimal`). Token fields `null` when the provider does not report them.
-- `model/BuildAnalysisResult` — `BuildAnalysisContext context`, generatedPrompt, aiAnalysis,
-  `RootCauseAnalysis rootCauseAnalysis`, `LlmMetrics llmMetrics` (both `null` for SUCCESS). What the use case returns.
-- `model/RootCauseAnalysis` — rootCause, file, line, method, actions (never null, immutable, max 3).
-  `withFallbackLocation(FailureLocation)` fills a missing file/line/method from the evidence.
-- `model/JenkinsBuildUrl` — `parse(url)` → jobPath (folders joined with "/"), buildNumber, normalised url
-  (trailing `/console`, query, fragment dropped; context path and port kept); `IllegalArgumentException` for
-  anything else (the controller answers 400).
+- `model/BuildAnalysisContext` — buildStatus, `FailedScenario failedScenario`, `FailedStep failedStep`,
+  exceptionType, `ErrorCategory errorCategory`, stackTrace (full block), `FailureLocation failureLocation`,
+  `FailedInteraction failedInteraction` (the primary failure), relevantLogSnippet, last200Lines,
+  `TestSummary testSummary`, `List<FailureGroup> failureGroups`. `isSuccessful()` / static `isSuccessStatus(String)`
+  is the single source of truth for "SUCCESS, no analysis needed"; `failureCount()` / `hasMultipleFailures()`
+  choose the flow.
+- `model/TestSummary` — total, passed, failed, skipped (`Integer`, `null` = not printed).
+- `model/TestFailure` — one failed test: `FailedScenario scenario` (a plain test: the runner's test name, no
+  file/line), `FailedStep step`, exceptionType, message, stackTrace, `FailureLocation`, `FailedInteraction`,
+  logExcerpt. Every field but `scenario` may be `null`.
+- `model/FailureGroup` — id (`G1`…), signature, failures (first = representative).
+- `model/FailureGroupAnalysis` — groupId, status (`ANALYZED` / `SKIPPED` / `FAILED`), rootCause, actions (≤ 3), note.
+- `model/FailedScenario` — name, featureFile, featureLine (`Open Google`, `src/test/resources/features/Example.feature`, `4`).
+- `model/FailedStep` — text, featureFile, featureLine (`Arama kutusuna tıkla.`, `Example.feature`, `6`).
+- `model/FailureLocation` — stepDefinition, file, line (`stepdefinitions.ExampleSteps.clickSearchBox`, `ExampleSteps.java`, `28`).
+- `model/FailedInteraction` — tool-neutral "command against a target": tool, command, locatorType, locatorValue
+  (`Selenium`, `findElement`, `name`, `qqqqqqqq`; Playwright would be `toBeVisible` + `getByRole` …).
+- `model/LlmMetrics` — provider, model, prompt/completion/total tokens, responseTimeMs, estimatedCostUsd.
+- `model/BuildAnalysisResult` — context, generatedPrompt, aiAnalysis, `RootCauseAnalysis rootCauseAnalysis`,
+  `LlmMetrics llmMetrics`, aiSummary, `List<FailureGroupAnalysis> groupAnalyses`. What the use case returns.
+- `model/RootCauseAnalysis` — rootCause, file, line, method, actions (never null, immutable, max 3);
+  `withFallbackLocation(FailureLocation)`.
+- `model/JenkinsBuildUrl` — `parse(url)` → jobPath, buildNumber, normalised url; `IllegalArgumentException` otherwise.
 - `model/ErrorCategory` — SELENIUM, MAVEN, CUCUMBER, JENKINS, INFRA, UNKNOWN, NONE (successful build).
 
-### application (use cases + parsing/prompt logic — may use Spring stereotypes, depends only on domain and ports)
+### application (use cases, parsing, prompts — may use Spring stereotypes; depends only on domain and ports)
 **Use case & ports**
 - `usecase/AnalyzeBuildUseCase` — inbound port: `BuildAnalysisResult analyze(String jobName, int buildNumber)`.
-- `usecase/AnalyzeBuildService` (@Service) — owns the flow; injects `BuildSourcePort`, `BuildContextBuilder`,
-  `PromptBuilder`, `LlmProvider`, `RootCauseParser`, `RootCauseFormatter`. Log → context → SUCCESS short-circuit →
-  prompt → `llmProvider.complete(new LlmRequest(prompt, RootCauseSchema.ROOT_CAUSE))`
-  (timed) → `LlmMetrics` → parse + location fallback → render → result. No HTTP here, no provider knowledge.
+- `usecase/AnalyzeBuildService` — owns the flow: log → context → SUCCESS short-circuit → single-failure or group
+  flow (calls, per-group statuses, summed metrics) → result. No HTTP, no provider knowledge.
 - `port/out/BuildSourcePort` — `String fetchConsoleLog(String jobName, int buildNumber)`.
-- `port/out/LlmProvider` — `LlmCompletion complete(LlmRequest request)` (+ `complete(String)` shortcut). The only LLM contract.
-- `port/out/LlmRequest` — prompt + optional `LlmResponseSchema`; `port/out/LlmResponseSchema` — name + JSON schema as a
-  plain map. Provider-neutral way to demand structured output; each adapter enforces it its own way.
-- `port/out/LlmCompletion` — provider-neutral answer: text, provider, model, promptTokens,
-  completionTokens, totalTokens, estimatedCostUsd.
-- `port/out/LlmAnalysisException` — framework-free exception every LLM adapter throws for any failure, so
-  no HTTP-client type leaks into application/api.
+- `port/out/LlmProvider` — `LlmCompletion complete(LlmRequest)`; `LlmRequest` = prompt + optional
+  `LlmResponseSchema` (name + JSON schema as a plain map); `LlmCompletion` = text, provider, model, tokens, cost;
+  `LlmAnalysisException` — the only error type an adapter throws.
 
-**Context extraction (`context/`)**
-- `BuildContextBuilder` (@Service) — orchestrates the extractors below. Build status first (Jenkins
-  `Finished: X`, last occurrence, wins over Maven `BUILD X`). SUCCESS → `NONE`, no error parsing,
-  classifier not called (green logs contain harmless warnings such as Selenium's "Unable to find CDP
-  implementation" that used to be classified SELENIUM). Blank log → status/category UNKNOWN. Keeps the
-  last **200** raw lines.
-- `ExceptionBlockExtractor` (package-private, static) — header = first line with a fully-qualified
-  `...Exception|Error`. Keeps the **full** block, unclipped: all message lines (Selenium: Session info,
-  Build info, System info, Driver info, Command, Capabilities, Session ID; max 30 as a runaway guard) and
-  **every** frame (`at`, `Caused by:`, `Suppressed:`, `... n more`). Ends at a blank line, a new log
-  record (`[INFO]`, `[ERROR]`, `[Pipeline]`, ...) or the first non-frame after frames. The **first
-  application frame** (package not in `FRAMEWORK_PACKAGES`: java., jdk., org.openqa., io.cucumber.,
-  org.junit., ...; source `X.java:N`) → `FailureLocation`. Fallback: Cucumber pretty step comment
-  `# pkg.Class.method()` above the header (step definition only).
-- `ScenarioExtractor` (package-private, static) — prefers the `Failed scenarios:` list; else the **last**
-  `Scenario:` line before the exception (multi-scenario runs); else the first. Splits
-  `Scenario: <name>  # <feature>:<line>` so `failedScenario` is only the name (`Open Google`, never
-  `Open Google     # src/...feature:4`). Strips Cucumber's ANSI colour codes (coloured pretty output
-  otherwise hid the `#` from the regex), accepts feature paths with spaces / `classpath:` / Windows
-  paths, and `cleanName` removes any leftover location comment while keeping a `#` inside the name
-  (`Order #12`). Scenario Outline/Template and Turkish `Senaryo` accepted.
-- `StepExtractor` (package-private, static) — Cucumber-JVM's step pseudo-frame in the stack trace
-  `at ✽.<step text>(<uri>/<file>.feature:<line>)` (`✽` often arrives as `?`) first; else the nearest
-  pretty-formatter step line above the exception (`* / Given / When / Then / And / But` + Turkish
-  `Diyelim ki / Eğer ki / O zaman / Ve / Fakat / Ama`), never crossing a Scenario header. No BDD output →
-  null. Step text is kept verbatim (trailing "." included) so it can be searched in the feature file.
-- `InteractionExtractor` (interface, strategy) — `Optional<FailedInteraction> extract(exceptionBlock)`.
-  All implementations are injected as `List<InteractionExtractor>`; the first non-empty result wins.
-  **Adding a tool = adding an implementation**; domain, prompt and API stay unchanged.
-- `SeleniumInteractionExtractor` (@Component) — only for blocks containing `org.openqa.selenium`.
-  `Command: [<session>, findElement {using=name, value=qqqqqqqq}]` → command + locator (value may contain
-  commas); no `using=` → command only; no Command line → locator from the message
-  `{"method":"css selector","selector":"..."}`.
-- `RelevantLogExtractor` (@Service) — builds `relevantLogSnippet`. Technology-agnostic, data-driven rule lists:
-  - **NOISE** (always dropped, wins over signals): dependency download/progress, copy/compile, git
-    checkout, `[Pipeline]`, prefix-only/separator lines, Maven help footer.
-  - **SIGNALS** (kept with 2 lines before + up to 12 after, until a blank line): generic failure words
-    incl. CamelCase `...Exception` / `...Error`, fail/fatal/assert/expected/timeout/unable to/...,
-    Turkish hata/başarısız, `at ...` and Python `File "...", line n` frames, ✘✖×❌.
-  - **MARKERS** (kept alone): Scenario/Feature, `Tests run:`, `Finished:`, `BUILD SUCCESS/FAILURE`, "n passed/failed".
-  - `WARN`/`WARNING` lines never trigger on their own, nor do their indented continuation lines unless
-    those carry a **strong** signal (`...Exception`/`...Error`, fail, `at` frame, ✘).
-  - Deduplicates (ignoring `[LEVEL]` prefixes/whitespace) and skips lines already in the stack-trace
-    section; `...` marks gaps; lines clipped at 300 chars (`MAX_LINE_LENGTH`); cap 120 lines (1/3 head +
-    2/3 tail); no signal at all → last 40 non-noise lines.
-  - Tested on the real Selenium build #7 and on Cypress, Playwright, pytest, NUnit and Karate samples.
-- `classifier/ErrorClassifier` (@Service) — rule-list based (no if-else chain): ordered
-  `List<Rule{ErrorCategory, keyword Pattern}>`, first match wins, else UNKNOWN. Only called for non-SUCCESS builds.
+**Context extraction (`context/`)** — the static extractors are package-private
+- `BuildContextBuilder` — orchestrates everything below; picks the primary failure; keeps the last 200 lines.
+- `ExceptionBlockExtractor` — `isHeader` / `extractAt` / `extract` (first block). A header is a whole fully-qualified
+  `…Exception|Error|Failure` token (ANSI codes stripped). Keeps the **full** block unclipped: every message line
+  (max 30 as a runaway guard) and every frame (`at`, `Caused by:`, `Suppressed:`, `... n more`); ends at a blank
+  line, a new log record (`[INFO]`, `[ERROR]`, `[Pipeline]`, …) or the first non-frame after frames. First
+  application frame (package not in `FRAMEWORK_PACKAGES`; `at [loader/][module/]pkg.Class.method(File.java:N)`)
+  → `FailureLocation`; fallback: the Cucumber step comment `# pkg.Class.method()` above the header.
+- `ScenarioExtractor` — scenario lines (`Scenario`, `Scenario Outline/Template`, `Example`, `Senaryo`, `Senaryo
+  taslağı`, `Örnek`; clean name, feature file with spaces / `classpath:` / Windows paths, ANSI stripped;
+  `cleanName` keeps a `#` inside a name like `Order #12`) and the `Failed scenarios:` lists (URL-decoded). For the
+  primary failure: the first listed entry, else the last scenario before the exception, else the first.
+- `StepExtractor` — the step pseudo-frame `at ✽.<step>(…/<file>.feature:<line>)` (`✽` often arrives as `?`) first;
+  else the nearest pretty step line above the exception (English + Turkish keywords), never crossing a scenario
+  header or, for a failed test, the start of that test's output.
+- `TestSummaryExtractor`, `FailureExtractor`, `FailureGrouper` — see [How an analysis works](#how-an-analysis-works).
+- `InteractionExtractor` (strategy interface) + `SeleniumInteractionExtractor` — `Command: [<session>, findElement
+  {using=name, value=…}]` → command + locator, else the message's `{"method":…,"selector":…}`. Adding a tool =
+  adding an implementation.
+- `RelevantLogExtractor` — data-driven NOISE / SIGNALS / MARKERS rules; warnings never trigger on their own;
+  dedup ignoring `[LEVEL]` prefixes; lines clipped at 300 chars; ≤ 120 lines (1/3 head + 2/3 tail); no signal → last
+  40 non-noise lines. Tested on Selenium, Cypress, Playwright, pytest, NUnit and Karate samples.
+- `classifier/ErrorClassifier` — ordered `Rule{ErrorCategory, keyword Pattern}` list, first match wins.
 
-**Prompt (`prompt/PromptBuilder`, @Service)** — text only, in Turkish, provider-agnostic; short and
-directive. Order:
-1. Role: Jenkins build failure **decision-support system**, not a report writer; answer "Neden / Nerede /
-   Ne yapmalıyım?" readable in 10 s. Turkish, identifiers as-is.
-2. **Source priority:** YAPISAL KANIT = primary, İLGİLİ LOG KESİTİ = secondary, SON 200 SATIR = supporting
-   context only; on conflict trust the structured evidence.
-3. **Rules:** only what the evidence shows — no speculation (examples named: iframe, app changed, cache,
-   "wait eklenmeli"), no technology/framework guessing, no invented root cause, no technical explanation or
-   tutorials ("Selenium/API/timeout nedir"); root cause must be specific (bad/good example given).
-4. `=== 1. YAPISAL KANIT (Structured Evidence) ===` — one `- Etiket: değer` line per **non-null** fact
-   (Build Durumu, Hata Kategorisi, Senaryo, Başarısız Adım, Step Definition, Hata Dosyası:Satırı,
-   Exception, Otomasyon Aracı, Başarısız Komut, Locator Tipi, Locator Değeri, Kod Dili — derived from
-   the exception file extension, not guessed) + the full `Stack Trace`.
-5. `=== 2. İLGİLİ LOG KESİTİ (Relevant Log Snippet) ===`
-6. `=== 3. JENKINS LOG — SON 200 SATIR ===` — raw tail so nothing the parser missed is lost; only lines
-   over 500 chars (base64 screenshots, dumps) are clipped.
-7. The JSON answer format — last, so it is what the model reads last: rootCause ≤ 2 sentences in Turkish;
-   file = file name only, line = number, method = method name only, taken from the evidence, else `null`;
-   ≤ 3 imperative actions derived from the evidence, no generic "incele / doğrula / tekrar çalıştır".
-Empty sections are skipped. Build #7's prompt is ~20k chars (~6k tokens).
+**Prompts (`prompt/`)**
+- `PromptBuilder` — `build(context)` (single failure) and `buildGroupPrompts(context)` (several); text only, in
+  Turkish, provider-agnostic; masks credentials.
+- `AnalysisLimits` (`analysis.*`) — `maxPromptChars`, `maxGroupsPerCall`, `maxLlmCalls`.
 
 **Answer handling (`analysis/`)**
-- `RootCauseSchema` — `LlmResponseSchema` of the answer: all five fields required,
-  `additionalProperties: false`, `file`/`line`/`method` nullable (what strict structured outputs need).
-  No `maxItems`: not every provider supports it, the parser enforces the limit.
-- `RootCauseParser` (@Component) — JSON → `RootCauseAnalysis`; tolerant of a ```` ```json ```` fence or text
-  around the object; normalises values (see *Output philosophy*). No JSON / no rootCause → empty
-  (the service then shows the raw answer).
-- `RootCauseFormatter` (@Component) — renders the ≤ 10-line text; `method()` gets `()` appended; sections
-  without evidence are omitted.
+- `RootCauseSchema` — `ROOT_CAUSE` and `FAILURE_GROUPS` (strict: every property required, `additionalProperties:
+  false`; no `maxItems` — not every provider supports it, the parser enforces the limits).
+- `RootCauseParser` — `parse` / `parseGroups`; `RootCauseFormatter` — `format` / `formatGroups`.
 
 ### api (inbound adapter — Spring web)
-- `controller/BuildAnalysisController` — the three endpoints (see "How a request flows").
-- `dto/request/AnalyzeBuildRequest` — record `{ buildUrl }` + validation.
-- `dto/response/AnalyzeBuildResponse` — flat record (see the API example above), used by POST and GET
-  `/analyses/{id}`. Tool-neutral and provider-neutral names; header fields `id, jobName, buildNumber,
-  buildUrl, analyzedAt` come from the stored row; `rootCauseAnalysis` is a nested `RootCauseAnalysisResponse`
-  (rootCause, file, line, method, actions); `testContext` a nested `TestContextResponse`
-  (scenario, step, featureFile, featureLine).
-- `mapper/BuildAnalysisResponseMapper` (@Component) — flattens the domain value objects
-  (`FailedScenario`, `FailedStep`, `FailureLocation`, `FailedInteraction`, `LlmMetrics`), maps
-  `RootCauseAnalysis` to the nested DTO and converts
-  `ErrorCategory` via `.name()`. Decides `testContext` (scenario or step found → set, else `null`).
-  `toEntity` builds the `analyses` row (build URL, headline, analysis status, `result_json`);
-  `toResponse(Analysis)` rebuilds the response from `result_json` + the row's columns.
-- `error/GlobalExceptionHandler` (@RestControllerAdvice) — `MethodArgumentNotValidException` → 400,
-  `RestClientResponseException` → upstream status (Jenkins), `ResourceAccessException` → 502 (Jenkins
-  unreachable), `LlmAnalysisException` → 502 (AI analysis failed), `ResponseStatusException` → its status
-  (400 invalid build URL, 404 unknown analysis).
+- `controller/BuildAnalysisController` — the three endpoints.
+- `dto/request/AnalyzeBuildRequest` — `{ buildUrl }` + validation.
+- `dto/response/AnalyzeBuildResponse` — flat record used by POST and GET `/analyses/{id}`; nested
+  `RootCauseAnalysisResponse`, `TestContextResponse`, `TestSummaryResponse`, `FailureGroupResponse` (with
+  `TestFailureResponse` per failed test). Tool- and provider-neutral names; `failureGroups` is never `null`.
+- `mapper/BuildAnalysisResponseMapper` — domain → DTO (flattened), `testContext` rule, failure groups with their AI
+  answers, `toEntity` (row: headline, analysis status, `result_json`), `toResponse(Analysis)` (from `result_json` +
+  columns).
+- `error/GlobalExceptionHandler` — validation → 400, Jenkins `RestClientResponseException` → its status,
+  `ResourceAccessException` → 502, `LlmAnalysisException` → 502, `ResponseStatusException` → its status.
 
 ### infrastructure (outbound adapters — all Jenkins/OpenAI/HTTP/database detail lives here)
-- `persistence/Analysis` — JPA entity of the `analyses` table.
-- `persistence/AnalysisRepository` — Spring Data repository; `Summary` is the history-list projection (reads
-  only the list columns, never the logs or `result_json`). Used directly by the controller.
-- `jenkins/JenkinsBuildSourceAdapter` (@Component) — implements `BuildSourcePort`.
-- `jenkins/JenkinsHttpClient` (@Component) — `RestClient` with base URL; Basic auth only when a username
-  is configured (warns if the token is missing). Builds `/job/<a>/job/<b>/<n>/consoleText` from the job full name
-  (`a/b`, each segment encoded). Reads `consoleText` as **raw bytes** and decodes it with
-  `ConsoleLogDecoder`.
-- `jenkins/ConsoleLogDecoder` (package-private) — strict UTF-8; if that fails, line by line: valid UTF-8
-  lines as UTF-8, others with the fallback charset (windows-1254). Reason: the Turkish Windows test JVM
-  writes in cp1254 while Jenkins' own lines are UTF-8.
-- `jenkins/JenkinsProperties` (`jenkins.*`, @Validated) — url (required), username, apiToken, logCharset,
-  logFallbackCharset.
-- `llm/TokenPricing` — record (input/output USD per 1M tokens) → `estimateUsd(prompt, completion)`,
-  6 decimals, `null` if a price or count is unknown. Shared by all provider adapters.
-- `llm/openai/OpenAiConfiguration` — active when `llm.provider=OPENAI` or unset; binds
-  `OpenAiProperties` and declares the `OpenAiProvider` bean.
-- `llm/openai/OpenAiProvider` — implements `LlmProvider` using **only the Responses API**. `RestClient`
-  over JDK `HttpClient` with connect + read timeouts, `Authorization: Bearer <key>`, `POST /responses`.
-  Answer = all `output_text` parts of the `message` items in `output[]` (the `reasoning` item is skipped).
-  Usage mapping: `input_tokens` → promptTokens, `output_tokens` → completionTokens, `total_tokens` →
-  totalTokens; cost via `TokenPricing`. Error handling: HTTP errors, timeouts, unreadable replies,
-  `status=failed` (with `error.code/message`), empty answers, `refusal` parts and "all tokens spent on
-  reasoning" (`status=incomplete`, `incomplete_details.reason=max_output_tokens`, no text) →
-  `LlmAnalysisException`; a truncated answer that has text is returned with a warning.
-- `llm/openai/OpenAiResponsesRequest` — `{model, input:<prompt>, max_output_tokens, reasoning:{effort}?,
-  text:{verbosity?, format?}, store:false}; a request schema becomes `text.format =
-  {type:"json_schema", name, schema, strict:true}` (structured outputs: the answer always matches the schema)` with `@JsonInclude(NON_NULL)`. **No `temperature`**: GPT-5 models reject
-  non-default values. `store:false` so build logs are not retained on OpenAI's side.
-- `llm/openai/OpenAiResponsesResponse` — reads `model`, `status`, `output[]` (typed items/content parts),
-  `incomplete_details`, `error`, `usage`; `outputText()` / `refusal()` helpers.
-- `llm/openai/OpenAiProperties` (`openai.*`, @Validated) — url, apiKey (**required**, env only), model,
-  timeoutSeconds, connectTimeoutSeconds, maxOutputTokens (required, no Java defaults), reasoningEffort,
-  verbosity, pricing.{inputUsdPerMillion, outputUsdPerMillion}.
+- `persistence/Analysis` (JPA entity) and `persistence/AnalysisRepository` (Spring Data; `Summary` = history-list
+  projection, never reads the logs or `result_json`).
+- `jenkins/JenkinsBuildSourceAdapter` → `JenkinsHttpClient` (base URL, Basic auth only when a username is set,
+  `/job/<a>/job/<b>/<n>/consoleText` from the job full name, body read as **raw bytes**) → `ConsoleLogDecoder`
+  (strict UTF-8; else line by line with the windows-1254 fallback — the Turkish Windows test JVM writes cp1254);
+  `JenkinsProperties` (`jenkins.*`).
+- `llm/TokenPricing` — USD per 1M tokens → `estimateUsd`, `null` if anything is unknown.
+- `llm/openai/OpenAiConfiguration`, `OpenAiProvider` (Responses API only; `RestClient` over JDK `HttpClient` with
+  connect + read timeouts; answer = the `output_text` parts of the `message` items; usage → tokens; HTTP errors,
+  timeouts, unreadable replies, `status=failed`, refusals, empty answers and "all tokens spent on reasoning" →
+  `LlmAnalysisException`; a truncated answer with text is returned with a warning), `OpenAiResponsesRequest`
+  (`{model, input, max_output_tokens, reasoning.effort?, text.verbosity?, text.format?, store:false}`; a schema
+  becomes `text.format = {type:"json_schema", name, schema, strict:true}`; **no `temperature`** — GPT-5 rejects
+  non-default values; `store:false` so logs are not retained by OpenAI), `OpenAiResponsesResponse`,
+  `OpenAiProperties` (`openai.*`, no Java defaults).
 
 ## Configuration (`src/main/resources/application.yml`)
 Every value can be overridden by the environment variable shown. **No secret is stored in the file.**
@@ -543,37 +614,80 @@ Every value can be overridden by the environment variable shown. **No secret is 
 | `jenkins.api-token` | `JENKINS_API_TOKEN` | empty | |
 | `jenkins.log-charset` | `JENKINS_LOG_CHARSET` | `UTF-8` | |
 | `jenkins.log-fallback-charset` | `JENKINS_LOG_FALLBACK_CHARSET` | `windows-1254` | for lines that are not valid UTF-8 |
+| `analysis.max-prompt-chars` | `ANALYSIS_MAX_PROMPT_CHARS` | `60000` | several failed tests: target size of one group prompt (characters) |
+| `analysis.max-groups-per-call` | `ANALYSIS_MAX_GROUPS_PER_CALL` | `6` | failure groups per LLM call (bounds the answer length) |
+| `analysis.max-llm-calls` | `ANALYSIS_MAX_LLM_CALLS` | `3` | LLM calls per build at most; groups beyond are listed as not analysed |
 | `llm.provider` | `LLM_PROVIDER` | `OPENAI` | only `OPENAI` is implemented |
 | `openai.api-key` | `OPENAI_API_KEY` | — (**required**) | env only; startup fails without it |
 | `openai.url` | `OPENAI_URL` | `https://api.openai.com/v1` | e.g. a company proxy |
 | `openai.model` | `OPENAI_MODEL` | `gpt-5-mini` | |
 | `openai.timeout-seconds` | `OPENAI_TIMEOUT_SECONDS` | `120` | read timeout for the whole answer |
 | `openai.connect-timeout-seconds` | `OPENAI_CONNECT_TIMEOUT_SECONDS` | `10` | |
-| `openai.max-output-tokens` | `OPENAI_MAX_OUTPUT_TOKENS` | `4000` | `max_output_tokens`; includes hidden reasoning tokens |
-| `openai.reasoning-effort` | `OPENAI_REASONING_EFFORT` | `low` | `reasoning.effort`: minimal / low / medium / high; empty = not sent |
-| `openai.verbosity` | `OPENAI_VERBOSITY` | `low` | `text.verbosity`: low / medium / high; empty = not sent |
+| `openai.max-output-tokens` | `OPENAI_MAX_OUTPUT_TOKENS` | `4000` | includes hidden reasoning tokens |
+| `openai.reasoning-effort` | `OPENAI_REASONING_EFFORT` | `low` | minimal / low / medium / high; empty = not sent |
+| `openai.verbosity` | `OPENAI_VERBOSITY` | `low` | low / medium / high; empty = not sent |
 | `openai.pricing.input-usd-per-million` | `OPENAI_INPUT_USD_PER_MILLION` | `0.25` | gpt-5-mini list price |
 | `openai.pricing.output-usd-per-million` | `OPENAI_OUTPUT_USD_PER_MILLION` | `2.00` | gpt-5-mini list price |
 
 Update the two pricing values if OpenAI changes its prices or another model is configured.
 
+## Tests
+
+**Backend:** `mvn test` — **226 tests** (220 unit tests + 4 PostgreSQL tests + 2 opt-in live OpenAI tests). No
+external service or API key is needed: OpenAI is stubbed with an in-process HTTP server or a mock, Jenkins is
+mocked, the controller test mocks the repository, and realistic console logs come from fixtures
+(`src/test/resources/logs/`) or the `SyntheticConsoleLog` generator (any number of passed/failed Cucumber
+scenarios with Surefire's repeated reports, as in a real run).
+- `AnalysisRepositoryTest` (4 tests) runs against the **real local PostgreSQL** when `DB_PASSWORD` is set; every
+  test is rolled back, nothing stays in the database.
+- `OpenAiLiveBuild7Test` (opt-in, real API, ~$0.01, sends the logs to OpenAI) runs build #7, three sample logs and
+  a synthetic 10-failure build: `mvn test -Dtest=OpenAiLiveBuild7Test -Dopenai.live=true` (needs `OPENAI_API_KEY`;
+  answers go to `target/live-analyses.txt`).
+
+With `DB_PASSWORD` set: `Tests run: 226, Failures: 0, Errors: 0, Skipped: 2` (only the live tests skipped). On the
+developer machine `DB_PASSWORD` is a **Windows user environment variable**, so `mvn test` in any new terminal
+picks it up (IntelliJ's run configuration does not pass its env vars to tests or terminals).
+
+Where the multi-failure behaviour is tested:
+
+| Case | Tests |
+|---|---|
+| one failed test keeps the single flow | `AnalyzeBuildServiceTest`, `Build7OpenAiEndToEndTest`, `MultiFailureContextTest.build7HasExactlyOneFailure` |
+| 30 scenarios / 10 failures → 10 found, counts, one row, one LLM call | `MultiFailureContextTest`, `MultiFailureAnalysisTest`, `BuildAnalysisControllerTest` |
+| the same error 10× → one group of 10 | `MultiFailureContextTest`, `MultiFailureAnalysisTest`, `FailureGrouperTest` |
+| NoSuchElement / Timeout / AssertionError apart | `MultiFailureContextTest`, `FailureGrouperTest` |
+| 1500 scenarios, few failures → one call, no passed tests in the prompt | `MultiFailureContextTest`, `MultiFailureAnalysisTest` |
+| many groups → bounded calls, nothing lost, partial failure, unreadable answers | `MultiFailureAnalysisTest`, `GroupPromptTest` |
+| missing stack trace / location → nothing invented | `MultiFailureContextTest`, `BuildAnalysisResponseMapperTest`, frontend `AiAnalysis.test` |
+| Maven / Jenkins / infrastructure → no failure groups, standard card | `MultiFailureContextTest`, frontend `AiAnalysis.test` |
+| SUCCESS → no LLM call, counts read | `AnalyzeBuildServiceTest`, `MultiFailureContextTest` |
+| persistence: one row, readable via GET, old rows readable | `AnalysisRepositoryTest` (real PostgreSQL), `BuildAnalysisResponseMapperTest`, `BuildAnalysisControllerTest` |
+| nested Jenkins URL `/job/Team/job/UI-Test/125/` | `JenkinsBuildUrlTest`, `JenkinsHttpClientTest`, frontend `jenkinsUrl.test` |
+| real-world log shapes (runner names, logged exceptions, reruns/flakes, Gradle, colours, encoded paths, REST-assured, huge lines) | `FailureExtractorTest`, `TestSummaryExtractorTest` |
+| credential masking, prompt size bounds | `PromptBuilderTest`, `GroupPromptTest` |
+
+**Frontend:** `cd frontend && npm test` — **32 Vitest tests** (URL parser, response mapping, `AnalyzeForm`,
+`AiAnalysis` single and multi-failure rendering); `npm run build` also type-checks.
+
+After deleting or renaming classes run `mvn clean test` so stale `.class` files in `target/` are not picked up.
+
 ## Architectural rules (keep these)
-- **Dependency direction:** infrastructure → application → domain. Domain imports nothing
-  framework-related; application never imports `infrastructure.*` (enforced by `ArchitectureBoundaryTest`).
-- **Provider independence:** the application layer knows only `LlmProvider` / `LlmCompletion`; provider
-  names, wire formats, keys and prices live only in `infrastructure/llm/<provider>` + config.
-- Controllers return DTOs, never domain models; conversion goes through the mapper. (Exception: the
-  history list returns the repository's `Summary` projection directly — it is already exactly the list row.)
+- **Dependency direction:** infrastructure → application → domain; domain framework-free; application never
+  imports `infrastructure.*` (`ArchitectureBoundaryTest`).
+- **Provider independence:** the application knows only `LlmProvider` / `LlmCompletion`; provider names, wire
+  formats, keys and prices live only in `infrastructure/llm/<provider>` + config.
+- Controllers return DTOs, never domain models (exception: the history list returns the repository's `Summary`
+  projection, which is already exactly the list row).
 - **The analysis core does not know the database:** storing and reading happen in the controller through
-  `AnalysisRepository`; `AnalyzeBuildService` and everything below it stay DB-free.
-- **Schema changes only through a new Flyway migration** (`V3__...`); never edit an applied one.
-- Jenkins/OpenAI/database/HTTP details live only in `infrastructure` + config.
-- Prefer rule lists / data-driven structures over long if-else chains (ErrorClassifier,
-  RelevantLogExtractor, FRAMEWORK_PACKAGES, language map).
-- Keep parsing **tool-neutral** in the domain; tool-specific knowledge goes into strategy
-  implementations (`InteractionExtractor`).
-- Extracted fields are `null` when not found — never guessed. The prompt only lists non-null facts.
-- Secrets come from the environment, never committed.
+  `AnalysisRepository`.
+- **One build = one analysis = one row;** never one LLM call per test; detected failures are never dropped because
+  they were not sent to the LLM.
+- **Schema changes only through a new Flyway migration** (`V3__…`); never edit an applied one.
+- Prefer rule lists / data-driven structures over if-else chains (ErrorClassifier, RelevantLogExtractor,
+  TestSummaryExtractor, FRAMEWORK_PACKAGES, the credential and run-specific-value masks).
+- Keep parsing **tool-neutral**; tool-specific knowledge goes into strategy implementations (`InteractionExtractor`).
+- Extracted fields are `null` when not found — never guessed. Prompts list only non-null facts.
+- Secrets come from the environment, never committed; credentials in logs never reach a prompt.
 
 ## Conventions & gotchas
 - **JDK 23 is the machine default**, the project targets Java 21. `pom.xml` lists Lombok explicitly in
@@ -583,69 +697,72 @@ Update the two pricing values if OpenAI changes its prices or another model is c
   ```powershell
   Get-NetTCPConnection -LocalPort 8090 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
   ```
-- **401/403 from the endpoint** = missing/wrong Jenkins credentials, not a code bug.
-  **502 "OpenAI returned HTTP 401"** = wrong/revoked `OPENAI_API_KEY`; **429** = rate limit or no quota.
-- **GPT-5 specifics:** no custom `temperature`; `max_output_tokens` also covers reasoning tokens, so a
-  too-small value can yield an empty answer (reported as a clear 502).
+- **401/403 from the endpoint** = missing/wrong Jenkins credentials, not a code bug. **502 "OpenAI returned HTTP
+  401"** = wrong/revoked `OPENAI_API_KEY`; **429** = rate limit or no quota.
+- **GPT-5 specifics:** no custom `temperature`; `max_output_tokens` also covers reasoning tokens, so a too-small
+  value can yield an empty answer (reported as a clear 502).
 - **Tests and the real environment:** tests that bind configuration either replace the OS environment
-  (`EnvironmentConfigBindingTest`) or set values explicitly, because an `OPENAI_API_KEY` on the developer
-  machine would otherwise leak into them.
-- **Manual test job:** `Mini-UI-Automation` — builds #1–#5 are SUCCESS; **#7 is a real Selenium failure**
-  (locator `name=qqqqqqqq`, `ExampleSteps.java:28`); #9 fails with a Selenium `TimeoutException`. Build #7's
-  full console log (200 lines) is the test fixture `src/test/resources/logs/build-7-selenium-failure.log`.
-- **PostgreSQL 18:** Flyway logs "PostgreSQL 18.6 is newer than this version of Flyway" — a warning only,
-  migrations work. Upgrade Flyway (via Spring Boot) when convenient.
+  (`EnvironmentConfigBindingTest`) or set values explicitly, because an `OPENAI_API_KEY` on the developer machine
+  would otherwise leak into them.
+- **Manual test job:** `Mini-UI-Automation` — builds #1–#5 are SUCCESS; **#7 is a real Selenium failure** (locator
+  `name=qqqqqqqq`, `ExampleSteps.java:28`); #9 fails with a Selenium `TimeoutException`. Build #7's full console log
+  is the fixture `src/test/resources/logs/build-7-selenium-failure.log`.
+- **PostgreSQL 18:** Flyway logs "PostgreSQL 18.6 is newer than this version of Flyway" — a warning only.
 - **Analysis ids have gaps:** the DB tests roll back their rows, but PostgreSQL does not give used ids back.
-- **Windows shell gotcha (Git Bash):** `/tmp` in Git Bash is not the folder Windows `node` sees; use a
-  Windows path for files shared between them.
-- `OpenAiProviderTest` uses an in-process `com.sun.net.httpserver.HttpServer` stub (`StubOpenAiServer`,
-  realistic Responses API replies incl. the `reasoning` item); `Build7OpenAiEndToEndTest` runs build #7 through
-  the whole pipeline against that stub and checks request, schema, rendered output, tokens and cost;
-  `OpenAiLiveBuild7Test` runs build #7 and the three `logs/samples/` logs
-  against the real API, only with `mvn test -Dtest=OpenAiLiveBuild7Test -Dopenai.live=true` (needs
-  `OPENAI_API_KEY`, costs ~$0.007, sends the logs to OpenAI; answers are written to `target/live-analyses.txt`);
-  `LlmProviderSelectionTest` checks provider selection; `EnvironmentConfigBindingTest` binds the real
-  `application.yml` against a simulated environment.
-- ⚠️ **Security:** an earlier Jenkins API token was committed in `application.yml` (initial commit). It is
-  gone from the file but still in git history — it must be revoked in Jenkins.
+- **Windows shell gotcha (Git Bash):** `/tmp` in Git Bash is not the folder Windows `node` sees; use a Windows path
+  for files shared between them.
+- ⚠️ **Security:** an earlier Jenkins API token was committed in `application.yml` (initial commit). It is gone from
+  the file but still in git history — it must be revoked in Jenkins.
 
 ## Status & roadmap
 **Done**
-- Jenkins fetch with env-only credentials and cp1254-aware log decoding.
-- Context extraction: SUCCESS short-circuit (`NONE`, no LLM call); clean scenario name + feature file/line;
-  failing step text + line; full exception block; first application frame → file/line/step definition;
-  tool-neutral failed interaction (Selenium command + locator); error category; relevant log snippet;
-  last 200 lines.
-- Provider-independent LLM port; OpenAI GPT-5 mini adapter; short Turkish prompt with evidence priority
-  and anti-hallucination rules.
-- Usage statistics in the response: provider, model, tokens, response time, estimated cost.
-- Decision-support output: JSON answer (strict schema) → parsed → ≤ 10-line 🚨/📍/✅ text + `rootCauseAnalysis`.
-- Input is a Jenkins build URL; jobs inside folders of any depth (`/job/Team/job/UI/job/X/125/`).
-- PostgreSQL history (one `analyses` table, Flyway V1 + V2) with `GET /api/v1/analyses` and `/{id}`.
-- React frontend: URL input, history table, analysis detail (Hata Sebebi, IDE-like test context, Çözüm
-  Önerileri, logs).
-- Verified end to end on 2026-10-04 against the real Jenkins, OpenAI and PostgreSQL 18 (build #7: stored,
-  listed, detail without prompt; ~6 s, ~$0.0024 per analysis).
-- 149 unit tests + 3 PostgreSQL tests + an opt-in live OpenAI test; 24 frontend tests.
+- Jenkins fetch with env-only credentials and cp1254-aware log decoding; nested-folder jobs.
+- Context extraction: SUCCESS short-circuit, test counts, primary failure (scenario, step, full exception block,
+  code location, UI command/locator), error category, relevant log snippet, last 200 lines.
+- **Every failed test** extracted (pretty output, Surefire/Failsafe, Gradle; reruns, flaky tests, logged exceptions
+  and runner naming variants handled), grouped by error signature, analysed with one bounded set of LLM calls
+  (normally one), per-group answer and status, stored as one row, shown as group cards with an IDE-like test view.
+- Provider-independent LLM port; OpenAI GPT-5 mini adapter; short Turkish decision-support prompts with evidence
+  priority, anti-speculation rules and credential masking; strict JSON answers; ≤ 10-line rendered text.
+- Usage statistics: provider, model, tokens, response time, estimated cost.
+- PostgreSQL history (`analyses`, Flyway V1 + V2) with list and detail endpoints; React frontend.
+- Verified end to end on 2026-10-04 against the real Jenkins, OpenAI and PostgreSQL 18 (build #7; ~6 s,
+  ~$0.0024). The multi-failure flow was verified with unit tests, the real PostgreSQL and the UI against a stub
+  API (2026-10-11/12) — **not yet against the real Jenkins/OpenAI**.
+
+**Known limitations**
+- Failures are itemised from the console log only: JVM output (Gherkin pretty output, Surefire/Failsafe and Gradle
+  per-test reports, Java exception blocks). pytest / Jest / Cypress logs give test counts only. Interleaved output
+  of parallel runs can attribute an exception to the wrong scenario.
+- A scenario that is not shown under a failed step, in a `Failed scenarios:` list or in a runner report cannot be
+  confirmed: in a log with none of these, an exception a passing scenario logged counts as its failure.
+- Runner names are matched to scenarios by name or by the same error; an unusual naming scheme with a different
+  error text could still count a failure twice.
+- Jenkins' JUnit `testReport` API is not used (this team's jobs publish Cucumber reports, not `junit`).
+- Only the representative's stack trace and log excerpt are stored per group, not one per failed test.
+- In a big run the stored "Relevant Snippet" is dominated by `Scenario:` marker lines (`RelevantLogExtractor` is
+  unchanged); the group cards carry each group's own evidence.
+- Masking is pattern-based: text typed by Selenium (`sendKeys … value=[…]`) is not masked; a JSON field named like a
+  credential is masked even when it holds a validation message.
+- Tokens and cost of a call that failed are not in the totals (the provider reports no usage for it).
 
 **Next**
-- Analyse a real build of a job **inside a Jenkins folder** — supported and unit-tested, never tried against
-  the real Jenkins.
-- Decide how the app is served for the team (e.g. frontend build copied into Spring's `static/` — then
-  `/analyses/:id` needs a forward to `index.html` on refresh — or a separate web server). Today it only runs as
-  two dev servers.
-- Collect real failed builds (not only synthetic samples) as an evaluation set; tighten the prompt where a
-  third action is still generic.
-- Add change context: the commits/changed files of the build from the Jenkins API and, if possible, the
-  source line at `exceptionFile:exceptionLine`.
-- More `InteractionExtractor` implementations (Playwright, Cypress) when those logs arrive.
-- Further providers (Anthropic, Ollama) as separate adapters when needed.
+- Run a real multi-failure build (and the opt-in live test) once to check the group prompt and answer quality.
+- Analyse a real build of a job **inside a Jenkins folder** — supported and unit-tested, never tried against the
+  real Jenkins.
+- Decide how the app is served for the team (e.g. the frontend build in Spring's `static/` — then `/analyses/:id`
+  needs a forward to `index.html` on refresh — or a separate web server). Today it runs as two dev servers.
+- Collect real failed builds as an evaluation set; tighten the prompt where a third action is still generic.
+- Change context: the build's commits/changed files from the Jenkins API and, if possible, the source line at
+  `exceptionFile:exceptionLine`.
+- More `InteractionExtractor` implementations (Playwright, Cypress) and further LLM providers when needed.
 
 **Decided against for V1 (do not re-add without the owner)**
 - Users, projects, project members, pipelines, roles, login (built once, then removed — V2 migration).
-- A "NE OLDU?" section (expected / actual / mechanism) — needs a new `whatHappened` field in the LLM schema
-  and prompt; the owner declined it for now.
-- Async analysis, SSE/real progress events, caching, queues, extra DTO/mapper/repository layers.
+- A "NE OLDU?" UI section (expected / actual / mechanism) with its own `whatHappened` field — declined for now
+  (the group answers' `rootCause` says what happened, under which condition and on which evidence).
+- Async analysis, SSE/real progress events, caching, queues, extra DTO/mapper/repository layers, new tables for
+  failures.
 - Structured Evidence tab and the 6-stage progress screen (replaced by the simpler V1 screens).
 
 **Open side-tasks**

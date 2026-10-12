@@ -44,9 +44,13 @@ export function toAnalysis(response: AnalysisResponse): Analysis {
     testContext: response.testContext,
     ai: succeeded
       ? null
-      : rootCause
-        ? { cause: rootCause.rootCause, suggestions: rootCause.actions }
-        : { cause: response.aiAnalysis ?? 'AI analizi yok.', suggestions: [] }, // answer the backend could not parse
+      : response.aiSummary
+        ? { cause: response.aiSummary, suggestions: [] } // several failed tests: the suggestions are per group
+        : rootCause
+          ? { cause: rootCause.rootCause, suggestions: rootCause.actions }
+          : { cause: response.aiAnalysis ?? 'AI analizi yok.', suggestions: [] }, // answer the backend could not parse
+    testSummary: response.testSummary ?? null,
+    failureGroups: response.failureGroups ?? [], // missing in analyses stored before multi-failure support
     relevantLogs: response.relevantLogSnippet ?? '',
     last200Lines: response.last200Lines ?? '',
   };

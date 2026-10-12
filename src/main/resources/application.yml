@@ -26,6 +26,14 @@ jenkins:
   log-charset: ${JENKINS_LOG_CHARSET:UTF-8}
   log-fallback-charset: ${JENKINS_LOG_FALLBACK_CHARSET:windows-1254}
 
+# Builds with several failed tests: the failures are grouped by error signature and the groups are
+# normally analysed in ONE LLM call. Only if they do not fit are they split, into at most max-llm-calls
+# calls; groups beyond that are still shown, marked as not analysed. Never one call per test.
+analysis:
+  max-prompt-chars: ${ANALYSIS_MAX_PROMPT_CHARS:60000}
+  max-groups-per-call: ${ANALYSIS_MAX_GROUPS_PER_CALL:6}
+  max-llm-calls: ${ANALYSIS_MAX_LLM_CALLS:3}
+
 # Which LlmProvider adapter is active. Only OPENAI exists today; a new provider
 # (ANTHROPIC, OLLAMA, ...) is a new adapter gated on its own value.
 llm:

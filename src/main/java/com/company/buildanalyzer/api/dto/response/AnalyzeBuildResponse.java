@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 
 /**
  * Response for POST /api/v1/analysis/build and GET /api/v1/analyses/{id}. Carries the structured context
@@ -36,13 +37,18 @@ import java.time.Instant;
  * @param rootCauseAnalysis    the same analysis as structured fields; {@code null} for a SUCCESS build or an
  *                             unparseable model answer
  * @param testContext          where the test failed; {@code null} when the failure does not come from a test
+ * @param testSummary          test counts printed by the test runner; {@code null} if the log has no summary line
+ * @param aiSummary            build-level AI summary of a build with several failed tests; {@code null} otherwise
+ * @param failureGroups        every failed test, grouped by error signature, with the AI's answer per group;
+ *                             empty when no failed test was found (Maven / Jenkins / infrastructure failures)
+ *                             and for analyses stored before multi-failure support
  * @param provider             LLM provider that answered, e.g. {@code OPENAI}; {@code null} if no LLM call was made
  * @param model                model that answered, e.g. {@code gpt-5-mini}
- * @param promptTokens         input tokens of the LLM call
- * @param completionTokens     output tokens of the LLM call (reasoning tokens included)
+ * @param promptTokens         input tokens of the LLM call(s)
+ * @param completionTokens     output tokens of the LLM call(s) (reasoning tokens included)
  * @param totalTokens          prompt + completion tokens
- * @param responseTimeMs       duration of the LLM call in milliseconds
- * @param estimatedCostUsd     estimated cost of the LLM call in US dollars
+ * @param responseTimeMs       duration of the LLM call(s) in milliseconds
+ * @param estimatedCostUsd     estimated cost of the LLM call(s) in US dollars
  */
 public record AnalyzeBuildResponse(
         Long id,
@@ -73,6 +79,9 @@ public record AnalyzeBuildResponse(
         String aiAnalysis,
         RootCauseAnalysisResponse rootCauseAnalysis,
         TestContextResponse testContext,
+        TestSummaryResponse testSummary,
+        String aiSummary,
+        List<FailureGroupResponse> failureGroups,
         String provider,
         String model,
         Integer promptTokens,
@@ -81,4 +90,8 @@ public record AnalyzeBuildResponse(
         Long responseTimeMs,
         BigDecimal estimatedCostUsd
 ) {
+
+    public AnalyzeBuildResponse {
+        failureGroups = failureGroups == null ? List.of() : failureGroups;
+    }
 }

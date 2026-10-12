@@ -139,6 +139,37 @@ class BuildContextBuilderTest {
         assertThat(snippet.length()).isLessThan(ctx.last200Lines().length() / 5);
     }
 
+    /** The log's first exception was only logged by a passing scenario: the primary failure is the failed test. */
+    @Test
+    void thePrimaryFailureIsTheFailedTestNotAnExceptionAPassingScenarioLogged() {
+        BuildAnalysisContext ctx = builder.build("""
+                Scenario: Sepet açılır     # src/test/resources/features/Shop.feature:3
+                  * Sepete git.                 # stepdefinitions.CartSteps.openCart()
+                Retrying click after stale element:
+                org.openqa.selenium.StaleElementReferenceException: stale element reference: stale element not found
+                \tat pages.CartPage.open(CartPage.java:20)
+
+                Scenario: Giriş yapılır     # src/test/resources/features/Shop.feature:8
+                  * Giriş butonuna tıkla.     # stepdefinitions.LoginSteps.clickLogin()
+                      org.openqa.selenium.NoSuchElementException: no such element: #login-btn
+                      \tat stepdefinitions.LoginSteps.clickLogin(LoginSteps.java:31)
+
+                Failed scenarios:
+                src/test/resources/features/Shop.feature:8 # Giriş yapılır
+
+                2 Scenarios (1 failed, 1 passed)
+                Finished: FAILURE
+                """);
+
+        assertThat(ctx.failedScenario()).isEqualTo(new FailedScenario("Giriş yapılır", "src/test/resources/features/Shop.feature", 8));
+        assertThat(ctx.failedStep()).isEqualTo(new FailedStep("Giriş butonuna tıkla.", null, null));
+        assertThat(ctx.exceptionType()).isEqualTo("org.openqa.selenium.NoSuchElementException");
+        assertThat(ctx.failureLocation()).isEqualTo(new FailureLocation("stepdefinitions.LoginSteps.clickLogin", "LoginSteps.java", 31));
+        assertThat(ctx.stackTrace()).startsWith("org.openqa.selenium.NoSuchElementException");
+        // the other exception is still in the log snippet the LLM gets
+        assertThat(ctx.relevantLogSnippet()).contains("StaleElementReferenceException");
+    }
+
     @Test
     void successfulBuildIsNotClassifiedEvenWithSeleniumWarningsInTheLog() {
         String log = """

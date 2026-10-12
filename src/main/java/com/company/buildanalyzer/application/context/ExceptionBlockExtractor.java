@@ -24,23 +24,31 @@ import java.util.regex.Pattern;
  */
 final class ExceptionBlockExtractor {
 
-    /** Result of the extraction; every field may be {@code null} and {@code headerIndex} -1 when no exception was found. */
-    record ExceptionBlock(int headerIndex, String exceptionType, String stackTrace, FailureLocation failureLocation) {
-        static final ExceptionBlock NONE = new ExceptionBlock(-1, null, null, null);
+    /**
+     * Result of the extraction; every field may be {@code null} and {@code headerIndex} -1 when no exception was found.
+     * {@code endIndex} is the first line after the block.
+     */
+    record ExceptionBlock(int headerIndex, int endIndex, String exceptionType, String stackTrace,
+                          FailureLocation failureLocation) {
+        static final ExceptionBlock NONE = new ExceptionBlock(-1, -1, null, null, null);
     }
 
     static final int MAX_MESSAGE_LINES = 30;
 
-    /** A fully-qualified Java throwable, e.g. {@code org.openqa.selenium.NoSuchElementException}. */
-    private static final Pattern EXCEPTION_TYPE =
-            Pattern.compile("((?:[a-zA-Z_$][\\w$]*\\.)+[A-Z][\\w$]*(?:Exception|Error))");
+    /**
+     * A fully-qualified Java throwable as a whole token, e.g. {@code org.openqa.selenium.NoSuchElementException}
+     * (or JUnit 4's {@code org.junit.ComparisonFailure}) — never a part of a longer name such as
+     * {@code com.acme.GlobalExceptionHandlerTest} or {@code steps.LoginErrorSteps}.
+     */
+    private static final Pattern EXCEPTION_TYPE = Pattern.compile(
+            "(?<![\\w$.])((?:[a-zA-Z_$][\\w$]*\\.)+[A-Z][\\w$]*(?:Exception|Error|Failure))(?![\\w$])");
 
     /** Any stack-trace line: a frame, "... N more", "Caused by:" or "Suppressed:". */
-    private static final Pattern TRACE_LINE =
+    static final Pattern TRACE_LINE =
             Pattern.compile("^\\s*(at\\s+.+|\\.{3}\\s+\\d+\\s+more.*|Caused by:.*|Suppressed:.*)$");
 
-    /** {@code at [module/]pkg.Class.method(Source)} */
-    private static final Pattern FRAME = Pattern.compile("^\\s*at\\s+(?:[\\w.$-]+/)?([\\w.$<>]+)\\((.*)\\)\\s*$");
+    /** {@code at [loader/][module/]pkg.Class.method(Source)}, e.g. Gradle's {@code at app//com.acme.LoginTest.login(...)} */
+    private static final Pattern FRAME = Pattern.compile("^\\s*at\\s+(?:[\\w.$-]*/)*([\\w.$<>]+)\\((.*)\\)\\s*$");
 
     /** {@code ExampleSteps.java:28} inside a frame's parentheses. */
     private static final Pattern SOURCE_AND_LINE = Pattern.compile("^([\\w$-]+\\.(?:java|kt|groovy|scala)):(\\d+)$");
@@ -62,23 +70,37 @@ final class ExceptionBlockExtractor {
     private ExceptionBlockExtractor() {
     }
 
+    /** The first exception block of the log: the build's primary failure. */
     static ExceptionBlock extract(List<String> lines) {
-        int header = findHeader(lines);
-        if (header < 0) {
-            return ExceptionBlock.NONE;
+        for (int i = 0; i < lines.size(); i++) {
+            if (isHeader(lines.get(i))) {
+                return extractAt(lines, i);
+            }
         }
-        Matcher type = EXCEPTION_TYPE.matcher(lines.get(header));
+        return ExceptionBlock.NONE;
+    }
+
+    /** Whether {@code line} starts an exception block (it names a fully-qualified throwable). */
+    static boolean isHeader(String line) {
+        return EXCEPTION_TYPE.matcher(plain(line)).find();
+    }
+
+    /** The exception block whose header is line {@code header}; "Caused by" parts stay inside it. */
+    static ExceptionBlock extractAt(List<String> lines, int header) {
+        String headerLine = plain(lines.get(header));
+        Matcher type = EXCEPTION_TYPE.matcher(headerLine);
         String exceptionType = type.find() ? type.group(1) : null;
 
         List<String> block = new ArrayList<>();
-        block.add(lines.get(header).strip());
+        block.add(headerLine.strip());
 
         FailureLocation applicationFrame = null;
         boolean inFrames = false;
         int messageLines = 0;
 
-        for (int i = header + 1; i < lines.size(); i++) {
-            String line = lines.get(i);
+        int i = header + 1;
+        for (; i < lines.size(); i++) {
+            String line = plain(lines.get(i));
             if (line.isBlank()) {
                 break;
             }
@@ -108,16 +130,12 @@ final class ExceptionBlockExtractor {
         if (applicationFrame == null) {
             applicationFrame = stepDefinitionFromCucumberStep(lines, header);
         }
-        return new ExceptionBlock(header, exceptionType, String.join(System.lineSeparator(), block), applicationFrame);
+        return new ExceptionBlock(header, i, exceptionType, String.join(System.lineSeparator(), block), applicationFrame);
     }
 
-    private static int findHeader(List<String> lines) {
-        for (int i = 0; i < lines.size(); i++) {
-            if (EXCEPTION_TYPE.matcher(lines.get(i)).find()) {
-                return i;
-            }
-        }
-        return -1;
+    /** The line without ANSI colour codes (coloured output would otherwise turn a type into "morg.openqa..."). */
+    static String plain(String line) {
+        return line.indexOf('\u001B') < 0 ? line : ScenarioExtractor.ANSI_ESCAPE.matcher(line).replaceAll("");
     }
 
     /** @return the location if {@code line} is a frame of the test project's own code, else {@code null}. */
@@ -145,7 +163,7 @@ final class ExceptionBlockExtractor {
         if (header == 0) {
             return null;
         }
-        Matcher step = STEP_DEFINITION_COMMENT.matcher(lines.get(header - 1));
+        Matcher step = STEP_DEFINITION_COMMENT.matcher(plain(lines.get(header - 1)));
         return step.find() ? new FailureLocation(step.group(1), null, null) : null;
     }
 }

@@ -1,6 +1,7 @@
 package com.company.buildanalyzer.api.controller;
 
 import com.company.buildanalyzer.api.mapper.BuildAnalysisResponseMapper;
+import com.company.buildanalyzer.api.mapper.MultiFailureResult;
 import com.company.buildanalyzer.application.port.out.LlmAnalysisException;
 import com.company.buildanalyzer.application.usecase.AnalyzeBuildUseCase;
 import com.company.buildanalyzer.domain.model.BuildAnalysisContext;
@@ -39,6 +40,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -65,11 +67,11 @@ class BuildAnalysisControllerTest {
                     new FailureLocation("stepdefinitions.LoginSteps.submit", "LoginSteps.java", 42),
                     new FailedInteraction("Selenium", "newSession", null, null),
                     "[ERROR] Tests run: 1, Errors: 1",
-                    "line 1\nline 2"),
+                    "line 1\nline 2", null, List.of()),
             "... rootCause ...", "🚨 KÖK NEDEN\nChromeDriver uyumsuz.",
             new RootCauseAnalysis("ChromeDriver uyumsuz.", "LoginSteps.java", 42, "submit",
                     List.of("ChromeDriver sürümünü kontrol et.")),
-            new LlmMetrics("OPENAI", "gpt-5-mini", 3000, 400, 3400, 2150L, new BigDecimal("0.00155")));
+            new LlmMetrics("OPENAI", "gpt-5-mini", 3000, 400, 3400, 2150L, new BigDecimal("0.00155")), null, List.of());
 
     @Autowired
     private MockMvc mockMvc;
@@ -208,6 +210,48 @@ class BuildAnalysisControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    /** Test 2/10: a build with several failed tests is stored as ONE analysis and returned with its groups. */
+    @Test
+    void storesABuildWithSeveralFailuresAsOneAnalysis() throws Exception {
+        when(analyzeBuildUseCase.analyze("Team/UI-Test", 125)).thenReturn(MultiFailureResult.RESULT);
+
+        mockMvc.perform(post("/api/v1/analysis/build")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"buildUrl\":\"https://jenkins.company.com/job/Team/job/UI-Test/125/\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(7))
+                .andExpect(jsonPath("$.jobName").value("Team/UI-Test"))
+                .andExpect(jsonPath("$.testSummary.total").value(30))
+                .andExpect(jsonPath("$.testSummary.failed").value(3))
+                .andExpect(jsonPath("$.aiSummary").value(MultiFailureResult.RESULT.aiSummary()))
+                .andExpect(jsonPath("$.failureGroups.length()").value(2))
+                .andExpect(jsonPath("$.failureGroups[0].failureCount").value(2))
+                .andExpect(jsonPath("$.failureGroups[0].aiStatus").value("ANALYZED"))
+                .andExpect(jsonPath("$.failureGroups[0].failures[1].testContext.scenario").value("Login 2"))
+                .andExpect(jsonPath("$.failureGroups[0].failures[1].testContext.featureLine").value(11))
+                .andExpect(jsonPath("$.failureGroups[1].aiStatus").value("SKIPPED"))
+                .andExpect(jsonPath("$.failureGroups[1].aiNote").value(MultiFailureResult.SKIPPED_NOTE))
+                .andExpect(jsonPath("$.generatedPrompt").value("THE GROUP PROMPT"));
+
+        verify(analysisRepository, times(1)).save(any());
+    }
+
+    @Test
+    void returnsAStoredMultiFailureAnalysisWithItsGroupsButWithoutThePrompt() throws Exception {
+        Analysis stored = mapper.toEntity(
+                JenkinsBuildUrl.parse("https://jenkins.company.com/job/Team/job/UI-Test/125/"), MultiFailureResult.RESULT);
+        stored.setId(7L);
+        when(analysisRepository.findById(7L)).thenReturn(Optional.of(stored));
+
+        mockMvc.perform(get("/api/v1/analyses/7"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.failureGroups[0].failures[0].testContext.scenario").value("Login 1"))
+                .andExpect(jsonPath("$.failureGroups[1].failures[0].testContext.scenario")
+                        .value("com.acme.OrderApiTest.createOrder"))
+                .andExpect(jsonPath("$.testSummary.passed").value(27))
+                .andExpect(jsonPath("$", not(hasKey("generatedPrompt"))));
     }
 
     @Test

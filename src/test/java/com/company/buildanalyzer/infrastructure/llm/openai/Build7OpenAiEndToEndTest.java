@@ -6,6 +6,7 @@ import com.company.buildanalyzer.application.classifier.ErrorClassifier;
 import com.company.buildanalyzer.application.context.BuildContextBuilder;
 import com.company.buildanalyzer.application.context.RelevantLogExtractor;
 import com.company.buildanalyzer.application.context.SeleniumInteractionExtractor;
+import com.company.buildanalyzer.application.prompt.AnalysisLimits;
 import com.company.buildanalyzer.application.prompt.PromptBuilder;
 import com.company.buildanalyzer.application.usecase.AnalyzeBuildService;
 import com.company.buildanalyzer.domain.model.BuildAnalysisResult;
@@ -58,7 +59,7 @@ class Build7OpenAiEndToEndTest {
                 (job, build) -> build7Log,
                 new BuildContextBuilder(new ErrorClassifier(), new RelevantLogExtractor(),
                         List.of(new SeleniumInteractionExtractor())),
-                new PromptBuilder(),
+                new PromptBuilder(new AnalysisLimits()),
                 new OpenAiProvider(server.properties()),
                 new RootCauseParser(),
                 new RootCauseFormatter());

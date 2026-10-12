@@ -28,6 +28,28 @@ public final class RootCauseSchema {
                     "method", Map.of("type", List.of("string", "null")),
                     "actions", Map.of("type", "array", "items", Map.of("type", "string")))));
 
+    /**
+     * Answer for a build with several failed tests, parsed by {@link RootCauseParser#parseGroups}:
+     * <pre>
+     * {"summary": "...", "groups": [{"id": "G1", "rootCause": "...", "actions": ["..."]}]}
+     * </pre>
+     * The location of a group is not asked for: it comes from the parser's evidence, not from the model.
+     */
+    public static final LlmResponseSchema FAILURE_GROUPS = new LlmResponseSchema("failure_groups_analysis", Map.of(
+            "type", "object",
+            "additionalProperties", false,
+            "required", List.of("summary", "groups"),
+            "properties", Map.of(
+                    "summary", Map.of("type", "string"),
+                    "groups", Map.of("type", "array", "items", Map.of(
+                            "type", "object",
+                            "additionalProperties", false,
+                            "required", List.of("id", "rootCause", "actions"),
+                            "properties", Map.of(
+                                    "id", Map.of("type", "string"),
+                                    "rootCause", Map.of("type", "string"),
+                                    "actions", Map.of("type", "array", "items", Map.of("type", "string"))))))));
+
     private RootCauseSchema() {
     }
 }

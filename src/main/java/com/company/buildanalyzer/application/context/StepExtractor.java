@@ -24,13 +24,15 @@ final class StepExtractor {
     private static final Pattern STEP_FRAME = Pattern.compile(
             "^\\s*at\\s+[✽?*]\\.(.+)\\((?:[^()]*[/\\\\])?([^/\\\\()]+\\.feature):(\\d+)\\)\\s*$");
 
-    /** Gherkin keywords (English + Turkish) of a pretty-printed step followed by its step-definition comment. */
-    private static final Pattern PRETTY_STEP = Pattern.compile(
-            "^\\s*(?:\\*|Given|When|Then|And|But|Diyelim ki|Eğer ki|O zaman|Ve|Fakat|Ama)\\s+(.+?)\\s+#\\s*\\S+\\s*$");
+    /** Gherkin step keywords, English + Turkish. */
+    static final String KEYWORDS = "(?:\\*|Given|When|Then|And|But|Diyelim ki|Eğer ki|O zaman|Ve|Fakat|Ama)";
+
+    /** A pretty-printed step followed by its step-definition comment. */
+    static final Pattern PRETTY_STEP = Pattern.compile("^\\s*" + KEYWORDS + "\\s+(.+?)\\s+#\\s*\\S+\\s*$");
 
     /** A scenario header ends the upward search for the pretty step. */
     private static final Pattern SCENARIO_HEADER =
-            Pattern.compile("^\\s*(?:Scenario|Scenario Outline|Scenario Template|Senaryo)\\b[^:]*:");
+            Pattern.compile("^\\s*(?:Scenario|Scenario Outline|Scenario Template|Example|Senaryo|Örnek)\\b[^:]*:");
 
     private StepExtractor() {
     }
@@ -41,6 +43,14 @@ final class StepExtractor {
      * @param stackTrace  the extracted exception block, or {@code null}
      */
     static FailedStep extract(List<String> lines, int headerIndex, String stackTrace) {
+        return extract(lines, headerIndex, stackTrace, 0);
+    }
+
+    /**
+     * Same, but the pretty step is only searched for down to {@code firstIndex} — the line where the
+     * failed test's own output starts — so a step of another test is never taken.
+     */
+    static FailedStep extract(List<String> lines, int headerIndex, String stackTrace, int firstIndex) {
         if (stackTrace != null) {
             for (String line : stackTrace.lines().toList()) {
                 Matcher frame = STEP_FRAME.matcher(line);
@@ -49,7 +59,7 @@ final class StepExtractor {
                 }
             }
         }
-        for (int i = headerIndex - 1; i >= 0; i--) {
+        for (int i = headerIndex - 1; i >= firstIndex; i--) {
             String line = lines.get(i);
             Matcher step = PRETTY_STEP.matcher(line);
             if (step.matches()) {

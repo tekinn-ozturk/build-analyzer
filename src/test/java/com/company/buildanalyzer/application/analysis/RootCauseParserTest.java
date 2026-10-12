@@ -1,5 +1,6 @@
 package com.company.buildanalyzer.application.analysis;
 
+import com.company.buildanalyzer.domain.model.FailureGroupAnalysis;
 import com.company.buildanalyzer.domain.model.RootCauseAnalysis;
 import org.junit.jupiter.api.Test;
 
@@ -95,5 +96,34 @@ class RootCauseParserTest {
         assertThat(parser.parse("KÖK NEDEN\nlocator bulunamadı")).isEmpty();
         assertThat(parser.parse("{\"rootCause\": broken")).isEmpty();
         assertThat(parser.parse("{\"rootCause\":\"  \",\"actions\":[\"a\"]}")).isEmpty();
+    }
+
+    @Test
+    void parsesTheFailureGroupsAnswer() {
+        RootCauseParser.GroupsAnswer answer = parser.parseGroups("""
+                ```json
+                {"summary": "10 testin 7'si G1 yüzünden düştü.\\nOrtak neden kanıtlanamadı.",
+                 "groups": [
+                   {"id": "G1", "rootCause": "#login-btn bulunamadı.", "actions": ["1. LoginSteps.java:31'deki locator'ı düzelt.", "b", "c", "d"]},
+                   {"id": "G2", "rootCause": "  ", "actions": []},
+                   {"id": null, "rootCause": "kimliksiz", "actions": []},
+                   {"id": "G1", "rootCause": "tekrar", "actions": []}
+                 ]}
+                ```""").orElseThrow();
+
+        assertThat(answer.summary()).isEqualTo("10 testin 7'si G1 yüzünden düştü. Ortak neden kanıtlanamadı.");
+        // a group without id or root cause is left out (reported as unanswered); the first answer of an id counts
+        assertThat(answer.groups()).containsOnlyKeys("G1");
+        assertThat(answer.groups().get("G1")).isEqualTo(FailureGroupAnalysis.analyzed("G1", "#login-btn bulunamadı.",
+                List.of("LoginSteps.java:31'deki locator'ı düzelt.", "b", "c")));
+    }
+
+    @Test
+    void groupsAnswerWithoutAGroupsArrayIsUnusable() {
+        assertThat(parser.parseGroups(null)).isEmpty();
+        assertThat(parser.parseGroups("Gruplar analiz edilemedi.")).isEmpty();
+        assertThat(parser.parseGroups("{\"summary\": \"x\"}")).isEmpty();
+        assertThat(parser.parseGroups("{\"summary\": \"x\", \"groups\": []}")).hasValueSatisfying(answer ->
+                assertThat(answer.groups()).isEmpty());
     }
 }

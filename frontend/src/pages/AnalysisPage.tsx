@@ -7,7 +7,7 @@ import AiAnalysis from '../components/AiAnalysis';
 import LogViewer from '../components/LogViewer';
 import StatusChip from '../components/StatusChip';
 import type { Analysis } from '../types/analysis';
-import { formatDateTime } from '../utils/format';
+import { formatDateTime, formatTestSummary } from '../utils/format';
 
 export default function AnalysisPage() {
   const { id } = useParams();
@@ -54,6 +54,11 @@ export default function AnalysisPage() {
           Jenkins'te aç <OpenInNewIcon sx={{ fontSize: 14, verticalAlign: 'middle' }} />
         </Link>
       </Stack>
+      {analysis.testSummary && (
+        <Typography variant="body2" sx={{ mt: 1 }}>
+          Testler: {formatTestSummary(analysis.testSummary)}
+        </Typography>
+      )}
 
       <Tabs value={tab} onChange={(_, value: number) => setTab(value)} sx={{ my: 3, borderBottom: 1, borderColor: 'divider' }}>
         <Tab label="AI Analysis" />
