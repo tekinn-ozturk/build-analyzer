@@ -1,10 +1,6 @@
 # Build Analyzer
 
-> **Yapay zekâ asistanı / yeni oturum için not:** bu README, her dosyayı okumadan projeyi anlamak için tek doğru
-> kaynaktır. Kodla elle senkron tutulur. Önce tamamını okuyun; tek tek dosyaları yalnızca değiştirmeniz
-> gerektiğinde açın.
-
-Türkçe konuşan bir QA ekibi (yaklaşık 4 kullanıcı, tek geliştirici) için yapay zekâ destekli **Jenkins build hata
+Yapay zekâ destekli **Jenkins build hata
 analizcisi**. Kullanıcı bir **Jenkins build URL'si** yapıştırır; uygulama build'in konsol logunu çeker, **hangi
 testlerin neden düştüğünü** bulur, bir LLM'den kısa, kanıta dayalı bir kök neden ve somut çözümler ister, sonucu
 PostgreSQL'e kaydeder ve küçük bir web arayüzünde gösterir.
