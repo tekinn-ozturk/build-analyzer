@@ -1,80 +1,83 @@
 # Build Analyzer
 
-> **Note for an AI assistant / new session:** this README is the single source of truth for understanding
-> the project without reading every file. It is kept in sync with the code by hand. Read it fully first; only
-> open individual files when you need to change them.
+> **Yapay zekâ asistanı / yeni oturum için not:** bu README, her dosyayı okumadan projeyi anlamak için tek doğru
+> kaynaktır. Kodla elle senkron tutulur. Önce tamamını okuyun; tek tek dosyaları yalnızca değiştirmeniz
+> gerektiğinde açın.
 
-AI-assisted **Jenkins build failure analyzer** for a Turkish-speaking QA team (about 4 users, one maintainer).
-The user pastes a **Jenkins build URL**; the app fetches the build's console log, finds out **which tests
-failed and why**, asks an LLM for a short, evidence-based root cause and concrete fixes, stores the result in
-PostgreSQL and shows it in a small web UI.
+Türkçe konuşan bir QA ekibi (yaklaşık 4 kullanıcı, tek geliştirici) için yapay zekâ destekli **Jenkins build hata
+analizcisi**. Kullanıcı bir **Jenkins build URL'si** yapıştırır; uygulama build'in konsol logunu çeker, **hangi
+testlerin neden düştüğünü** bulur, bir LLM'den kısa, kanıta dayalı bir kök neden ve somut çözümler ister, sonucu
+PostgreSQL'e kaydeder ve küçük bir web arayüzünde gösterir.
 
 ```
-Jenkins Build URL → console log → failures extracted & grouped → AI analysis → PostgreSQL → Analysis / History
+Jenkins Build URL → konsol logu → hatalar çıkarılır ve gruplanır → AI analizi → PostgreSQL → Analiz / Geçmiş
 ```
 
-- **One build = one analysis = one database row**, whether 1 or 500 tests failed.
-- **One LLM call per build** in the normal case — never one call per test. Several failed tests are grouped by
-  error signature first; only when the groups do not fit into one prompt are they split into a few calls
-  (at most 3 by default).
-- **SUCCESS builds** are answered instantly without calling the LLM.
-- Nothing is invented: a value the log does not show stays `null` (no guessed file, line or test count).
-- No users, projects, pipelines or login (removed on purpose, see [Database](#database)).
+- **Bir build = bir analiz = bir veritabanı satırı**; ister 1 test düşsün ister 500.
+- Normal durumda **build başına tek LLM çağrısı** — asla test başına bir çağrı yapılmaz. Birden fazla başarısız test
+  önce hata imzasına göre gruplanır; gruplar tek prompt'a sığmazsa ancak o zaman birkaç çağrıya bölünür
+  (varsayılan en fazla 3).
+- **SUCCESS build'ler** LLM çağrılmadan anında cevaplanır.
+- Hiçbir şey uydurulmaz: logda görünmeyen bir değer `null` kalır (tahmini dosya, satır veya test sayısı yok).
+- Kullanıcı, proje, pipeline veya giriş (login) yok (bilerek kaldırıldı, bkz. [Veritabanı](#veritabanı)).
 
-**Guiding rule (owner's decision): keep the codebase small enough that one developer can follow a bug through it
-in 10–15 minutes.** No new layers, generic abstractions, extra endpoints, dependencies or "future-proofing"
-without a real need; backend changes are agreed with the owner first.
+**Yol gösteren kural (proje sahibinin kararı): kod tabanı, tek bir geliştiricinin bir hatayı 10–15 dakikada baştan
+sona takip edebileceği kadar küçük kalmalı.** Gerçek bir ihtiyaç olmadan yeni katman, genel soyutlama, ek endpoint,
+bağımlılık veya "geleceğe hazırlık" yok; backend değişiklikleri önce proje sahibiyle konuşulur.
 
-## Contents
-- [Tech stack](#tech-stack)
-- [Running locally](#running-locally)
-- [Using the app](#using-the-app)
-- [How an analysis works](#how-an-analysis-works)
+## İçindekiler
+- [Teknolojiler](#teknolojiler)
+- [Yerelde çalıştırma](#yerelde-çalıştırma)
+- [Uygulamanın kullanımı](#uygulamanın-kullanımı)
+- [Bir analiz nasıl çalışır](#bir-analiz-nasıl-çalışır)
 - [API](#api)
-- [Database](#database)
+- [Veritabanı](#veritabanı)
 - [Frontend](#frontend)
-- [Architecture](#architecture)
-- [Package / class map](#package--class-map)
-- [Configuration](#configuration-srcmainresourcesapplicationyml)
-- [Tests](#tests)
-- [Architectural rules](#architectural-rules-keep-these)
-- [Conventions & gotchas](#conventions--gotchas)
-- [Status & roadmap](#status--roadmap)
+- [Mimari](#mimari)
+- [Paket / sınıf haritası](#paket--sınıf-haritası)
+- [Yapılandırma](#yapılandırma-srcmainresourcesapplicationyml)
+- [Testler](#testler)
+- [Mimari kurallar](#mimari-kurallar-korunmalı)
+- [Konvansiyonlar ve dikkat edilecekler](#konvansiyonlar-ve-dikkat-edilecekler)
+- [Durum ve yol haritası](#durum-ve-yol-haritası)
 
-## Tech stack
-- **Backend:** Java 21, Spring Boot 3.3.5, Maven, Lombok; **Hexagonal (Ports & Adapters)**, LLM-provider independent.
-- **Jenkins access:** Spring `RestClient` (HTTP Basic auth, credentials from the environment); only `consoleText` is read.
-- **LLM:** **OpenAI Responses API** (`POST /v1/responses`), default model **`gpt-5-mini`**, strict structured
-  output (JSON schema). The provider sits behind the `LlmProvider` port; OpenAI is the only implementation today.
-- **Database:** **PostgreSQL** (Spring Data JPA, schema by **Flyway**) — one table, `analyses`.
-- **Frontend:** React 19 + TypeScript + Vite + MUI 9 + React Router 8 in `frontend/` (lean V1, no state library).
+## Teknolojiler
+- **Backend:** Java 21, Spring Boot 3.3.5, Maven, Lombok; **Hexagonal (Ports & Adapters)**, LLM sağlayıcısından
+  bağımsız.
+- **Jenkins erişimi:** Spring `RestClient` (HTTP Basic auth, kimlik bilgileri ortam değişkenlerinden); yalnızca
+  `consoleText` okunur.
+- **LLM:** **OpenAI Responses API** (`POST /v1/responses`), varsayılan model **`gpt-5-mini`**, katı yapılandırılmış
+  çıktı (JSON schema). Sağlayıcı `LlmProvider` port'unun arkasındadır; bugün tek implementasyonu OpenAI.
+- **Veritabanı:** **PostgreSQL** (Spring Data JPA, şema **Flyway** ile) — tek tablo, `analyses`.
+- **Frontend:** `frontend/` altında React 19 + TypeScript + Vite + MUI 9 + React Router 8 (yalın V1, state
+  kütüphanesi yok).
 - springdoc-openapi (Swagger UI).
 
-## Running locally
+## Yerelde çalıştırma
 
-Prerequisites: a Jenkins on `http://localhost:8080`, an **OpenAI API key**, a local **PostgreSQL** (database
-`build_analyzer`, user `build_analyzer_user`; PostgreSQL 18 is used) and Node.js for the frontend. The backend
-listens on **port 8090**, the frontend dev server on **5173**.
+Gereksinimler: `http://localhost:8080` üzerinde bir Jenkins, bir **OpenAI API anahtarı**, yerel bir **PostgreSQL**
+(veritabanı `build_analyzer`, kullanıcı `build_analyzer_user`; PostgreSQL 18 kullanılıyor) ve frontend için Node.js.
+Backend **8090 portunu**, frontend geliştirme sunucusu **5173**'ü dinler.
 
-**Everyday start:** run `BuildAnalyzerApplication` in IntelliJ (env vars below) → `cd frontend` → `npm run dev`
-→ open http://localhost:5173.
+**Günlük başlatma:** IntelliJ'de `BuildAnalyzerApplication`'ı çalıştırın (ortam değişkenleri aşağıda) → `cd frontend`
+→ `npm run dev` → http://localhost:5173 adresini açın.
 
-Secrets come **only from environment variables** — never from `application.yml`:
+Gizli bilgiler **yalnızca ortam değişkenlerinden** gelir — asla `application.yml`'den değil:
 
-| Env var | Required | Purpose |
+| Ortam değişkeni | Zorunlu | Amaç |
 |---|---|---|
-| `OPENAI_API_KEY` | **yes** | OpenAI API key. Missing → the app refuses to start (`OPENAI_API_KEY environment variable is not set`). |
-| `JENKINS_USERNAME` | yes for this Jenkins | anonymous access answers 403 |
-| `JENKINS_API_TOKEN` | yes for this Jenkins | Jenkins → user menu → *Security* → *API Token* |
-| `DB_PASSWORD` | **yes** | password of the PostgreSQL user |
-| `DB_URL` | no | default `jdbc:postgresql://localhost:5432/build_analyzer` |
-| `DB_USERNAME` | no | default `build_analyzer_user` |
+| `OPENAI_API_KEY` | **evet** | OpenAI API anahtarı. Yoksa uygulama başlamaz (`OPENAI_API_KEY environment variable is not set`). |
+| `JENKINS_USERNAME` | bu Jenkins için evet | anonim erişim 403 döner |
+| `JENKINS_API_TOKEN` | bu Jenkins için evet | Jenkins → kullanıcı menüsü → *Security* → *API Token* |
+| `DB_PASSWORD` | **evet** | PostgreSQL kullanıcısının şifresi |
+| `DB_URL` | hayır | varsayılan `jdbc:postgresql://localhost:5432/build_analyzer` |
+| `DB_USERNAME` | hayır | varsayılan `build_analyzer_user` |
 
-- **IntelliJ (how the app is normally run):** Run configuration `BuildAnalyzerApplication` → *Edit
+- **IntelliJ (uygulama normalde böyle çalıştırılır):** Run configuration `BuildAnalyzerApplication` → *Edit
   Configurations…* → *Environment variables*:
-  `OPENAI_API_KEY=<key>;JENKINS_USERNAME=<user>;JENKINS_API_TOKEN=<token>;DB_PASSWORD=<db password>` → restart
-  the app (env is read at startup only).
-- **First start:** Flyway creates the schema; the history starts empty. Nothing has to be set up by hand.
+  `OPENAI_API_KEY=<key>;JENKINS_USERNAME=<user>;JENKINS_API_TOKEN=<token>;DB_PASSWORD=<db password>` → uygulamayı
+  yeniden başlatın (ortam değişkenleri yalnızca açılışta okunur).
+- **İlk başlatma:** şemayı Flyway oluşturur; geçmiş boş başlar. Elle kurulması gereken bir şey yok.
 - **Terminal (PowerShell):**
   ```powershell
   $env:OPENAI_API_KEY = "<key>"
@@ -83,181 +86,190 @@ Secrets come **only from environment variables** — never from `application.yml
   $env:DB_PASSWORD = "<db password>"
   mvn spring-boot:run
   ```
-  (cmd.exe: `set "OPENAI_API_KEY=<key>"` etc.)
+  (cmd.exe: `set "OPENAI_API_KEY=<key>"` vb.)
 - **Frontend:**
   ```powershell
   cd frontend
   npm install
-  npm run dev      # http://localhost:5173 — /api is proxied to the backend on :8090 (no CORS needed)
+  npm run dev      # http://localhost:5173 — /api istekleri :8090'daki backend'e yönlendirilir (CORS gerekmez)
   ```
 
-An OpenAI key is created at https://platform.openai.com/api-keys. Never commit it.
+OpenAI anahtarı https://platform.openai.com/api-keys adresinden oluşturulur. Asla commit etmeyin.
 
-**Trying the API without the UI:** Swagger UI at http://localhost:8090/swagger-ui/index.html →
-`POST /api/v1/analysis/build` → *Try it out*; or Postman `POST http://localhost:8090/api/v1/analysis/build`
-with a raw JSON body.
+**API'yi arayüz olmadan denemek:** http://localhost:8090/swagger-ui/index.html adresindeki Swagger UI →
+`POST /api/v1/analysis/build` → *Try it out*; ya da Postman ile ham JSON gövdesiyle
+`POST http://localhost:8090/api/v1/analysis/build`.
 
-## Using the app
-1. **Dashboard:** paste a Jenkins build URL (e.g. `https://jenkins.company.com/job/Team/job/UI-Test/125/`) →
-   *Analyze Build*. The URL is checked instantly (jobs inside folders of any depth are fine). While the
-   synchronous request runs (usually 3–15 s) the UI shows "Build analiz ediliyor...". The recent history is
-   listed below.
-2. **Analysis detail** (`/analyses/:id`): build number, status chip, job, analysis time, "Jenkins'te aç" link
-   and — when the log has a test summary — "Testler: 30 toplam · 20 başarılı · 10 başarısız · 0 atlanan".
-   Two tabs:
-   - **AI Analysis** — what the analysis found (see the three cases below).
-   - **Relevant Logs** — the filtered log snippet / the last 200 raw lines; the full log stays on Jenkins.
-3. **Build History** (`/history`): every analysis, newest first, Jenkins-style table.
+## Uygulamanın kullanımı
+1. **Dashboard:** bir Jenkins build URL'si yapıştırın (ör. `https://jenkins.company.com/job/Team/job/UI-Test/125/`) →
+   *Analyze Build*. URL anında kontrol edilir (her derinlikteki klasörlerin içindeki job'lar sorunsuz). Senkron
+   istek sürerken (genelde 3–15 sn) arayüz "Build analiz ediliyor..." gösterir. Son analizler aşağıda listelenir.
+2. **Analiz detayı** (`/analyses/:id`): build numarası, durum etiketi, job, analiz zamanı, "Jenkins'te aç" bağlantısı
+   ve — logda test özeti varsa — "Testler: 30 toplam · 20 başarılı · 10 başarısız · 0 atlanan".
+   İki sekme:
+   - **AI Analysis** — analizin bulduğu şey (aşağıdaki üç duruma bakın).
+   - **Relevant Logs** — filtrelenmiş log kesiti / son 200 ham satır; logun tamamı Jenkins'te kalır.
+3. **Build History** (`/history`): tüm analizler, en yenisi üstte, Jenkins tarzı tablo.
 
-What **AI Analysis** shows:
+**AI Analysis** neyi gösterir:
 
-| Build | View |
+| Build | Görünüm |
 |---|---|
-| SUCCESS | green "Build başarılı. Analiz edilecek bir hata yok." (no LLM call) |
-| **one failed test**, or a non-test failure | **HATA SEBEBİ** (AI root cause) → *where*: the IDE-like view (feature file, scenario, failed step and its line, error) when the failure comes from a test, else a plain **HATA ÖZETİ** card (Maven / Jenkins / pipeline / infrastructure) → **ÇÖZÜM ÖNERİLERİ** (≤ 3 actions) |
-| **several failed tests** | **HATA SEBEBİ** = the AI's build summary + "10 başarısız test · 3 hata grubu · 2 grup AI ile ayrıntılı analiz edildi"; an info line when the runner counted more failures than the log itemised; a warning when groups were not analysed. Then **one card per failure group**: group id, exception, test count, error signature, the group's own HATA SEBEBİ / ÇÖZÜM ÖNERİLERİ (or "AI analizi yok: <reason>"), the list of affected tests — selecting one opens it in the same IDE-like view |
+| SUCCESS | yeşil "Build başarılı. Analiz edilecek bir hata yok." (LLM çağrısı yok) |
+| **tek başarısız test** veya test dışı bir hata | **HATA SEBEBİ** (AI'ın kök nedeni) → *nerede*: hata bir testten geliyorsa IDE benzeri görünüm (feature dosyası, senaryo, başarısız step ve satırı, hata), değilse sade bir **HATA ÖZETİ** kartı (Maven / Jenkins / pipeline / altyapı) → **ÇÖZÜM ÖNERİLERİ** (≤ 3 aksiyon) |
+| **birden fazla başarısız test** | **HATA SEBEBİ** = AI'ın build özeti + "10 başarısız test · 3 hata grubu · 2 grup AI ile ayrıntılı analiz edildi"; runner, logda ayrıntısı bulunandan fazla hata saydıysa bir bilgi satırı; analiz edilmemiş gruplar varsa bir uyarı. Ardından **her hata grubu için bir kart**: grup id'si, exception, test sayısı, hata imzası, grubun kendi HATA SEBEBİ / ÇÖZÜM ÖNERİLERİ (veya "AI analizi yok: <neden>"), etkilenen testlerin listesi — birini seçmek onu aynı IDE benzeri görünümde açar |
 
-The IDE-like view never shows a file or line the log did not have: a plain JUnit test is shown by its name only.
-UI labels are English where the spec gave them (Analyze Build, Build History, …); AI content and headings are
-Turkish (`HATA SEBEBİ`, `ÇÖZÜM ÖNERİLERİ`; the words "Kök Neden" / "Aksiyon" are not used in the UI).
+IDE benzeri görünüm logda olmayan bir dosya veya satırı asla göstermez: düz bir JUnit testi yalnızca adıyla
+gösterilir. Arayüz etiketleri, spesifikasyonun öyle verdiği yerlerde İngilizcedir (Analyze Build, Build History, …);
+AI içeriği ve başlıklar Türkçedir (`HATA SEBEBİ`, `ÇÖZÜM ÖNERİLERİ`; arayüzde "Kök Neden" / "Aksiyon" kelimeleri
+kullanılmaz).
 
-## How an analysis works
+## Bir analiz nasıl çalışır
 
 ```
 POST /api/v1/analysis/build {buildUrl}
-  1. JenkinsBuildUrl.parse          job path (folders joined with "/") + build number      — 400 if not a build URL
-  2. Jenkins consoleText            raw bytes → ConsoleLogDecoder (UTF-8, cp1254 fallback per line)
-  3. BuildContextBuilder            status, test counts, primary failure, every failed test (grouped), log snippet, tail
-  4. SUCCESS?                       fixed message, no prompt, no LLM call
-  5. ≤ 1 failed test                single-failure prompt → 1 LLM call (RootCauseSchema.ROOT_CAUSE)
-     several failed tests           group prompt(s) → normally 1, at most 3 LLM calls (RootCauseSchema.FAILURE_GROUPS)
-  6. parse + render                 RootCauseParser / RootCauseFormatter; per-group status ANALYZED / SKIPPED / FAILED
-  7. store                          one `analyses` row (result_json) → response with the row id
+  1. JenkinsBuildUrl.parse          job yolu ("/" ile birleşen klasörler) + build numarası — build URL'si değilse 400
+  2. Jenkins consoleText            ham byte'lar → ConsoleLogDecoder (UTF-8, satır bazında cp1254 yedeği)
+  3. BuildContextBuilder            durum, test sayıları, birincil hata, tüm başarısız testler (gruplanmış), log kesiti, son satırlar
+  4. SUCCESS?                       sabit mesaj, prompt yok, LLM çağrısı yok
+  5. ≤ 1 başarısız test             tek hata prompt'u → 1 LLM çağrısı (RootCauseSchema.ROOT_CAUSE)
+     birden fazla başarısız test    grup prompt'ları → normalde 1, en fazla 3 LLM çağrısı (RootCauseSchema.FAILURE_GROUPS)
+  6. ayrıştır + biçimlendir         RootCauseParser / RootCauseFormatter; grup başına durum ANALYZED / SKIPPED / FAILED
+  7. kaydet                         tek `analyses` satırı (result_json) → satır id'siyle cevap
 ```
 
-### 1. Reading the log (`BuildContextBuilder`)
-Extraction is string/regex matching over well-known Jenkins / Maven / BDD / stack-trace shapes; it is
-technology-neutral where it can be (no framework is required) and every field is best-effort (`null` = not found).
+### 1. Logu okuma (`BuildContextBuilder`)
+Çıkarım, bilinen Jenkins / Maven / BDD / stack trace kalıpları üzerinde string/regex eşleştirmesidir; mümkün olan
+yerde teknolojiden bağımsızdır (hiçbir framework şart değil) ve her alan elden geldiğince doldurulur
+(`null` = bulunamadı).
 
-- **Build status:** Jenkins `Finished: X` (last occurrence) wins over Maven `BUILD X`. SUCCESS → category `NONE`,
-  no error parsing at all (green logs contain harmless warnings that must not be classified).
-- **Test counts** (`TestSummaryExtractor`): the runner's own summary line — Surefire/Failsafe totals (preferred:
-  they count every test of a Maven module, Cucumber JUnit-runner scenarios included; per-class lines are skipped
-  so nothing is counted twice; several modules are added up), else Cucumber `30 Scenarios (10 failed, 20 passed)`,
-  Gradle `30 tests completed, 10 failed`, pytest `== 3 failed, 20 passed ==`, Jest `Tests: 2 failed, 28 passed,
-  30 total`. A count the format does not print stays `null` (pytest has no total).
-- **Error category** (`ErrorClassifier`): one build-level family — SELENIUM, MAVEN, CUCUMBER, JENKINS, INFRA,
-  UNKNOWN — from an ordered keyword rule list. The exception types of the single failures live in their groups,
-  not in this one field.
-- **Primary failure** (the single-failure fields: scenario, step, exception type, full exception block, first
-  application frame, failed UI interaction): the log's **first exception** — unless that exception belongs to no
-  failed test (a retry a passing scenario logged, a setup warning) while a failed test printed one: then it is
-  **the first failed test**. Used by the single-failure prompt and the flat API fields.
-- **Relevant log snippet** (`RelevantLogExtractor`): noise dropped (downloads, git, `[Pipeline]`, Maven help),
-  signal lines kept with context, markers kept alone, deduplicated, ≤ 120 lines. **Last 200 lines** kept raw.
+- **Build durumu:** Jenkins `Finished: X` (son geçtiği yer) Maven `BUILD X`'e üstün gelir. SUCCESS → kategori
+  `NONE`, hiç hata ayrıştırması yapılmaz (yeşil loglarda sınıflandırılmaması gereken zararsız uyarılar bulunur).
+- **Test sayıları** (`TestSummaryExtractor`): runner'ın kendi özet satırı — Surefire/Failsafe toplamları (tercih
+  edilen: bir Maven modülündeki her testi sayarlar, Cucumber JUnit-runner senaryoları dahil; hiçbir şey iki kez
+  sayılmasın diye sınıf bazındaki satırlar atlanır; birden fazla modül toplanır), yoksa Cucumber
+  `30 Scenarios (10 failed, 20 passed)`, Gradle `30 tests completed, 10 failed`, pytest `== 3 failed, 20 passed ==`,
+  Jest `Tests: 2 failed, 28 passed, 30 total`. Formatın yazdırmadığı bir sayı `null` kalır (pytest toplam yazmaz).
+- **Hata kategorisi** (`ErrorClassifier`): build düzeyinde tek bir aile — SELENIUM, MAVEN, CUCUMBER, JENKINS, INFRA,
+  UNKNOWN — sıralı bir anahtar kelime kural listesinden. Tek tek hataların exception tipleri bu tek alanda değil,
+  kendi gruplarında tutulur.
+- **Birincil hata** (tek hata alanları: senaryo, step, exception tipi, tam exception bloğu, ilk uygulama frame'i,
+  başarısız UI etkileşimi): logdaki **ilk exception** — ancak o exception hiçbir başarısız teste ait değilse (geçen
+  bir senaryonun logladığı bir retry, bir kurulum uyarısı) ve başarısız bir test exception yazdırmışsa, o zaman
+  **ilk başarısız test**. Tek hata prompt'u ve düz API alanları bunu kullanır.
+- **İlgili log kesiti** (`RelevantLogExtractor`): gürültü atılır (indirmeler, git, `[Pipeline]`, Maven yardım
+  metinleri), sinyal satırları bağlamıyla tutulur, işaret satırları tek başına tutulur, tekrarlar ayıklanır,
+  ≤ 120 satır. **Son 200 satır** ham olarak saklanır.
 
-### 2. Finding every failed test (`FailureExtractor`)
-A failed test is an exception block printed inside a test's own output. A test's output starts at
-- a Gherkin scenario line — `Scenario:`, `Scenario Outline:`, `Example:`, Turkish `Senaryo:` / `Örnek:` (pretty
-  output of Cucumber or any BDD tool), or
-- a runner's per-test result header — Surefire/Failsafe `[ERROR] Example.Open Google -- Time elapsed … <<< ERROR!`
+### 2. Tüm başarısız testleri bulma (`FailureExtractor`)
+Başarısız test, bir testin kendi çıktısı içinde yazdırılmış bir exception bloğudur. Bir testin çıktısı şunlardan
+biriyle başlar:
+- bir Gherkin senaryo satırı — `Scenario:`, `Scenario Outline:`, `Example:`, Türkçe `Senaryo:` / `Örnek:`
+  (Cucumber'ın veya herhangi bir BDD aracının pretty çıktısı), ya da
+- bir runner'ın test bazındaki sonuç başlığı — Surefire/Failsafe `[ERROR] Example.Open Google -- Time elapsed … <<< ERROR!`
   (2.x: `Open Google(Example)  Time elapsed …`), Gradle `LoginTest > invalidPassword() FAILED`,
 
-and ends at the next test or a run summary (`Tests run:`, `30 Scenarios (…)`, `Results:`, `BUILD …`, `Running X`).
-Exceptions outside any test (Maven, Jenkins, infrastructure, after the run) are **not** test failures.
+ve bir sonraki testte veya bir koşu özetinde biter (`Tests run:`, `30 Scenarios (…)`, `Results:`, `BUILD …`,
+`Running X`). Herhangi bir testin dışındaki exception'lar (Maven, Jenkins, altyapı, koşudan sonra) test hatası
+**sayılmaz**.
 
-- **Which exception is the test's failure:** the error Cucumber prints **indented right under the failed step**;
-  an exception the application merely logged during the scenario does not replace it. A scenario without such an
-  error (a hook failure, or a passing scenario that logged a handled exception) counts only when something
-  confirms it failed — Cucumber's `Failed scenarios:` list or the runner's report — unless the log has neither.
-- **Printed twice:** the pretty formatter and the runner's report print the same failure (build #7 prints it
-  three times). A report is that scenario again when its name is the scenario's name — `Example.Open Google`,
-  `Login.Login with user #2` (repeated names), `Open Google(Example)` — or, failing that, when it carries the same
-  error. One report per scenario, so outline rows with one name are still counted apart.
-- **Reruns:** a scenario printed again at the same location, or a report repeated under the same name
-  (Surefire `rerunFailingTestsCount`), counts once — the last run. Tests Surefire lists under `Flakes:` (failed,
-  then passed on rerun) are not failures.
-- **`Failed scenarios:` list** (when present) decides which scenarios failed; a listed scenario without a
-  printed exception is kept with `null` exception fields. List entries are URL-decoded (`Odeme%20akisi.feature`).
-- **Per failure:** scenario / test name, failed step (text, feature file, line — from Cucumber's
-  `at ✽.<step>(…feature:N)` pseudo-frame or the pretty step line, never a step of another test), exception type,
-  first message line (REST-assured's "1 expectation failed." gets its next line too), full exception block,
-  first application frame (`File.java:line`, also Gradle's `at app//…` frames), failed UI interaction
-  (Selenium command + locator), and a few lines logged right after the exception (`logExcerpt`, e.g. a response
-  body; stops at the next scenario's tags).
-- Exception headers are whole fully-qualified `…Exception` / `…Error` / `…Failure` tokens (JUnit 4's
-  `ComparisonFailure` included) — never part of a class name such as `GlobalExceptionHandlerTest` or
-  `LoginErrorSteps`. ANSI colour codes and Windows line endings are handled. Failures are kept in log order.
+- **Testin hatası hangi exception'dır:** Cucumber'ın **başarısız step'in hemen altına girintili** yazdırdığı hata;
+  uygulamanın senaryo sırasında sadece logladığı bir exception onun yerini almaz. Böyle bir hatası olmayan bir
+  senaryo (bir hook hatası veya ele alınmış bir exception loglayan geçen bir senaryo) ancak başarısız olduğunu bir
+  şey doğrularsa sayılır — Cucumber'ın `Failed scenarios:` listesi veya runner'ın raporu —, logda ikisi de yoksa hariç.
+- **İki kez yazdırılma:** pretty formatter ve runner raporu aynı hatayı yazdırır (build #7 onu üç kez yazdırır).
+  Bir rapor, adı senaryonun adıysa o senaryonun tekrarıdır — `Example.Open Google`, `Login.Login with user #2`
+  (tekrarlanan adlar), `Open Google(Example)` —, bu olmazsa aynı hatayı taşıyorsa. Senaryo başına bir rapor; bu
+  yüzden aynı adlı outline satırları yine ayrı sayılır.
+- **Yeniden koşmalar (rerun):** aynı konumda yeniden yazdırılan bir senaryo veya aynı adla tekrarlanan bir rapor
+  (Surefire `rerunFailingTestsCount`) bir kez sayılır — son koşu. Surefire'ın `Flakes:` altında listelediği testler
+  (önce düşen, rerun'da geçen) hata değildir.
+- **`Failed scenarios:` listesi** (varsa) hangi senaryoların düştüğüne karar verir; listede olup exception'ı
+  yazdırılmamış bir senaryo exception alanları `null` olarak tutulur. Liste girdileri URL-decode edilir
+  (`Odeme%20akisi.feature`).
+- **Her hata için:** senaryo / test adı, başarısız step (metin, feature dosyası, satır — Cucumber'ın
+  `at ✽.<step>(…feature:N)` sözde frame'inden veya pretty step satırından, asla başka bir testin step'i değil),
+  exception tipi, mesajın ilk satırı (REST-assured'ın "1 expectation failed." satırında bir sonraki satır da
+  alınır), tam exception bloğu, ilk uygulama frame'i (`File.java:line`, Gradle'ın `at app//…` frame'leri de),
+  başarısız UI etkileşimi (Selenium komutu + locator) ve exception'dan hemen sonra loglanan birkaç satır
+  (`logExcerpt`, ör. bir response gövdesi; bir sonraki senaryonun tag'lerinde durur).
+- Exception başlıkları tam nitelikli `…Exception` / `…Error` / `…Failure` token'larının tamamıdır (JUnit 4'ün
+  `ComparisonFailure`'ı dahil) — asla `GlobalExceptionHandlerTest` veya `LoginErrorSteps` gibi bir sınıf adının
+  parçası değil. ANSI renk kodları ve Windows satır sonları ele alınır. Hatalar log sırasıyla tutulur.
 
-### 3. Grouping (`FailureGrouper`)
-Failed tests with the same **error signature** form one group:
+### 3. Gruplama (`FailureGrouper`)
+Aynı **hata imzasına** sahip başarısız testler bir grup oluşturur:
 
 ```
-exception type + ": " + first message line (run-specific values masked) + " @ " + failure location
+exception tipi + ": " + mesajın ilk satırı (koşuya özgü değerler maskelenmiş) + " @ " + hata konumu
 org.openqa.selenium.NoSuchElementException: no such element: … #login-btn … @ stepdefinitions.LoginSteps.clickLogin(LoginSteps.java:31)
 ```
 
-- Masked are only values that differ between two runs of the same error: session ids, UUIDs, timestamps, ports,
-  object hashes, numbers of 10+ digits. Locators, status codes and expected/actual values are kept.
-- The location is the first application frame, else the failing step — so the **same exception type at another
-  place, or with another message, is another group**. The same type alone is never taken as the same cause.
-- Groups are numbered `G1, G2, …`, largest first, then in log order. The first test of a group is its
-  **representative**: its evidence goes to the LLM and its full stack trace is stored once.
-- Failures without any exception share one group: "Logda exception / stack trace yok".
+- Yalnızca aynı hatanın iki koşusu arasında değişen değerler maskelenir: session id'leri, UUID'ler, zaman
+  damgaları, portlar, nesne hash'leri, 10+ haneli sayılar. Locator'lar, durum kodları ve beklenen/gerçek değerler
+  korunur.
+- Konum ilk uygulama frame'idir, yoksa düşen step — dolayısıyla **aynı exception tipi başka bir yerde veya başka bir
+  mesajla başka bir gruptur**. Tek başına aynı tip asla aynı neden sayılmaz.
+- Gruplar `G1, G2, …` diye numaralanır; önce en büyüğü, sonra log sırası. Bir grubun ilk testi onun
+  **temsilcisidir**: kanıtları LLM'e gider ve tam stack trace'i bir kez saklanır.
+- Hiç exception'ı olmayan hatalar tek bir grubu paylaşır: "Logda exception / stack trace yok".
 
-### 4. Asking the LLM
-**At most one failed test** → the **single-failure prompt** (Turkish, short and directive):
-1. role: a Jenkins build-failure **decision-support system**, not a report writer — answer "Neden patladı?
-   Nerede patladı? Ne yapmalıyım?" in ten seconds; source priority and anti-speculation rules;
-2. `=== 1. YAPISAL KANIT ===` — one `- Etiket: değer` line per **non-null** fact (Build Durumu, Hata Kategorisi,
-   Test Özeti, Senaryo, Başarısız Adım, Step Definition, Hata Dosyası:Satırı, Exception, Otomasyon Aracı,
-   Başarısız Komut, Locator Tipi/Değeri, Kod Dili) + the full stack trace — the primary source;
-3. `=== 2. İLGİLİ LOG KESİTİ ===` — secondary; `=== 3. JENKINS LOG — SON 200 SATIR ===` — supporting only
-   (lines over 500 chars clipped);
-4. the JSON answer format, last: `{"rootCause", "file", "line", "method", "actions"}` (strict schema).
+### 4. LLM çağrısı
+**En fazla bir başarısız test** → **tek hata prompt'u** (Türkçe, kısa ve yönlendirici):
+1. rol: bir rapor yazarı değil, bir Jenkins build hatası **karar destek sistemi** — "Neden patladı? Nerede patladı?
+   Ne yapmalıyım?" sorularını on saniyede cevaplatmak; kaynak önceliği ve spekülasyon karşıtı kurallar;
+2. `=== 1. YAPISAL KANIT ===` — **null olmayan** her bilgi için bir `- Etiket: değer` satırı (Build Durumu, Hata
+   Kategorisi, Test Özeti, Senaryo, Başarısız Adım, Step Definition, Hata Dosyası:Satırı, Exception, Otomasyon
+   Aracı, Başarısız Komut, Locator Tipi/Değeri, Kod Dili) + tam stack trace — birincil kaynak;
+3. `=== 2. İLGİLİ LOG KESİTİ ===` — ikincil; `=== 3. JENKINS LOG — SON 200 SATIR ===` — yalnızca destekleyici
+   (500 karakterden uzun satırlar kırpılır);
+4. en sonda JSON cevap formatı: `{"rootCause", "file", "line", "method", "actions"}` (katı şema).
 
-Build #7's prompt is ~20k chars (~6k tokens).
+Build #7'nin prompt'u ~20 bin karakter (~6 bin token).
 
-**Several failed tests** → **group prompt(s)** (`PromptBuilder.buildGroupPrompts`):
-- the build summary (status, category, test counts, failed tests found / groups), an index line for **every**
-  group, then — per group in this request — its signature, the representative's facts (step, step definition,
-  file:line, exception, UI interaction), the **counted** list of affected tests (≤ 10 names + "… ve N test daha";
-  the count is always complete), **one** representative stack trace (≤ 40 lines) and its log excerpt;
-- passed tests are only counted, never listed; no build-wide snippet or raw tail (in a big run those are mostly
-  passed scenarios);
-- extra rules: the counts and test lists come from the application and must not be changed; the same exception
-  type is not the same cause; a common cause is stated only if the evidence shows it, otherwise the model must
-  say it cannot be proven; missing evidence is said, not filled;
-- answer: `{"summary": "...", "groups": [{"id": "G1", "rootCause": "...", "actions": ["..."]}]}`
-  (`RootCauseSchema.FAILURE_GROUPS`, strict) — `rootCause` ≤ 3 sentences (what happened, under which condition,
-  on which evidence), ≤ 3 prioritised actions.
+**Birden fazla başarısız test** → **grup prompt'ları** (`PromptBuilder.buildGroupPrompts`):
+- build özeti (durum, kategori, test sayıları, bulunan başarısız testler / gruplar), **her** grup için bir dizin
+  satırı, ardından — bu istekteki her grup için — imzası, temsilcinin bilgileri (step, step definition,
+  dosya:satır, exception, UI etkileşimi), etkilenen testlerin **sayılı** listesi (≤ 10 ad + "… ve N test daha";
+  sayı her zaman eksiksizdir), **tek** temsilci stack trace (≤ 40 satır) ve onun log alıntısı;
+- geçen testler yalnızca sayılır, asla listelenmez; build genelinde log kesiti veya ham son satırlar yok (büyük bir
+  koşuda bunlar çoğunlukla geçen senaryolardır);
+- ek kurallar: sayılar ve test listeleri uygulamadan gelir, değiştirilmemelidir; aynı exception tipi aynı neden
+  değildir; ortak bir neden ancak kanıt gösteriyorsa söylenir, aksi halde model kanıtlanamadığını söylemelidir;
+  eksik kanıt doldurulmaz, eksik olduğu söylenir;
+- cevap: `{"summary": "...", "groups": [{"id": "G1", "rootCause": "...", "actions": ["..."]}]}`
+  (`RootCauseSchema.FAILURE_GROUPS`, katı) — `rootCause` ≤ 3 cümle (ne oldu, hangi koşulda, hangi kanıta göre),
+  ≤ 3 önceliklendirilmiş aksiyon.
 
-**Call budget** (`analysis.*`, see [Configuration](#configuration-srcmainresourcesapplicationyml)): groups are
-packed into one prompt while it stays within `max-prompt-chars` (60 000) and `max-groups-per-call` (6); at most
-`max-llm-calls` (3) prompts are made. A normal build needs **one** call. Every field that can grow is clipped
-(signature, facts, trace lines, log lines), so a prompt stays bounded however big a log is. The limits are
-character counts — no token estimate is claimed.
+**Çağrı bütçesi** (`analysis.*`, bkz. [Yapılandırma](#yapılandırma-srcmainresourcesapplicationyml)): gruplar,
+prompt `max-prompt-chars` (60 000) ve `max-groups-per-call` (6) sınırları içinde kaldıkça tek prompt'a
+paketlenir; en fazla `max-llm-calls` (3) prompt oluşturulur. Normal bir build **tek** çağrı gerektirir. Büyüyebilen
+her alan kırpılır (imza, bilgiler, trace satırları, log satırları), böylece log ne kadar büyük olursa olsun prompt
+sınırlı kalır. Sınırlar karakter sayısıdır — token tahmini iddia edilmez.
 
-**Per-group status** (`FailureGroupAnalysis`): `ANALYZED`; `SKIPPED` — over the call limit, not sent (still
-listed with all its tests); `FAILED` — the call failed, the answer was unreadable or had nothing for the group,
-or (single-failure build) the prompt's evidence was another exception. Every non-analysed group carries an
-`aiNote`. A failed call loses only its own groups; only when **no** call gets through does the analysis fail
-(502, nothing stored). Metrics are the sum of the answered calls (a failed call reports no usage).
+**Grup başına durum** (`FailureGroupAnalysis`): `ANALYZED`; `SKIPPED` — çağrı sınırının üstünde, gönderilmedi (yine
+de tüm testleriyle listelenir); `FAILED` — çağrı başarısız oldu, cevap okunamadı veya grup için bir şey içermiyordu,
+ya da (tek hatalı build'de) prompt'taki kanıt başka bir exception'dı. Analiz edilmemiş her grubun bir `aiNote`'u
+vardır. Başarısız bir çağrı yalnızca kendi gruplarını kaybettirir; analiz ancak **hiçbir** çağrı geçmezse başarısız
+olur (502, hiçbir şey kaydedilmez). Metrikler cevaplanan çağrıların toplamıdır (başarısız bir çağrı kullanım
+bildirmez).
 
-**Credentials are masked in every prompt** before it leaves the application: `password=` / `-Dtoken: x` /
-`DB_PASSWORD=` / `x-api-key:` values, JSON fields named like credentials (also escaped `\"password\":\"…\"`),
-`Authorization: Basic|Bearer …` (also `Authorization=Basic …` of REST-assured logs), bare long bearer tokens,
-`user:password@` in URLs, `curl -u user:password`, Gherkin key/value rows `| password | … |`. Not masked: empty
-values, `name:value` without a space (`LoginTest.invalidPassword:57` keeps its line number), CSS selectors such as
-`#password:focus`. A JSON field named like a credential is masked even when it holds a validation message.
+**Kimlik bilgileri her prompt'ta maskelenir**, prompt uygulamadan çıkmadan önce: `password=` / `-Dtoken: x` /
+`DB_PASSWORD=` / `x-api-key:` değerleri, kimlik bilgisi gibi adlandırılmış JSON alanları (kaçışlı
+`\"password\":\"…\"` de), `Authorization: Basic|Bearer …` (REST-assured loglarındaki `Authorization=Basic …` de),
+tek başına duran uzun bearer token'lar, URL'lerdeki `user:password@`, `curl -u user:password`, Gherkin
+anahtar/değer satırları `| password | … |`. Maskelenmeyenler: boş değerler, boşluksuz `name:value`
+(`LoginTest.invalidPassword:57` satır numarasını korur), `#password:focus` gibi CSS seçicileri. Kimlik bilgisi gibi
+adlandırılmış bir JSON alanı, bir doğrulama mesajı tutsa bile maskelenir.
 
-### 5. Answer handling and output format
-- `RootCauseParser` tolerates a ```` ```json ```` fence or text around the object and normalises values: file name
-  only (path/package/`:line` removed), simple method name, `line <= 0` → `null`, list markers stripped, ≤ 3
-  actions, one line per value. `RootCauseAnalysis.withFallbackLocation` fills a missing file/line/method from the
-  parser's evidence. An unparseable answer is shown as-is. `parseGroups` drops groups without id or root cause
-  (the service reports them as unanswered); unknown ids are ignored.
-- `RootCauseFormatter` renders the ready-to-show `aiAnalysis` text, **at most 10 lines**:
+### 5. Cevabın işlenmesi ve çıktı formatı
+- `RootCauseParser`, nesnenin etrafındaki bir ```` ```json ```` bloğunu veya metni tolere eder ve değerleri
+  normalleştirir: yalnızca dosya adı (yol/paket/`:line` kaldırılır), basit metot adı, `line <= 0` → `null`, liste
+  işaretleri temizlenir, ≤ 3 aksiyon, değer başına tek satır. `RootCauseAnalysis.withFallbackLocation` eksik
+  dosya/satır/metodu parser'ın kanıtından doldurur. Ayrıştırılamayan bir cevap olduğu gibi gösterilir.
+  `parseGroups` id'si veya kök nedeni olmayan grupları atar (servis onları cevapsız olarak bildirir); bilinmeyen
+  id'ler yok sayılır.
+- `RootCauseFormatter` gösterime hazır `aiAnalysis` metnini üretir, **en fazla 10 satır**:
   ```
   🚨 KÖK NEDEN                              🚨 BUILD ÖZETİ
   name=qqqqqqqq locator'ı bulunamadı; …      10 başarısız testin 5'i #login-btn …
@@ -267,30 +279,30 @@ values, `name:value` without a space (`LoginTest.invalidPassword:57` keeps its l
   ✅ AKSİYON                                 - G3 (1 test): AI analizi yok (…)
   - ExampleSteps.java:28'deki locator'ı …
   ```
-- **Output philosophy:** users (QA Engineer, QA Lead, SDET, Developer, Team Lead) must answer *"Neden patladı?
-  Nerede patladı? Ne yapmalıyım?"* in about ten seconds. No technical-explanation section, no tutorials
-  ("Selenium nedir"), no speculation the evidence does not show ("iframe olabilir", "cache", "wait eklenmeli"),
-  a specific root cause ("name=qqqqqqqq locator'ı bulunamadı", not "Element bulunamadı"), actions derived from the
-  evidence, no confidence level (dropped by product decision).
-- **Measured on 2026-09-27** (gpt-5-mini, `OpenAiLiveBuild7Test`): build #7 plus three synthetic sample logs gave
-  the right file:line, a specific Turkish root cause and 2–3 actions in 3–6 s for $0.0011–0.0026 each. Weak spot:
-  a third action is sometimes generic.
+- **Çıktı felsefesi:** kullanıcılar (QA Engineer, QA Lead, SDET, Developer, Team Lead) *"Neden patladı? Nerede
+  patladı? Ne yapmalıyım?"* sorularını yaklaşık on saniyede cevaplayabilmelidir. Teknik açıklama bölümü yok, eğitim
+  metni yok ("Selenium nedir"), kanıtın göstermediği spekülasyon yok ("iframe olabilir", "cache", "wait
+  eklenmeli"); spesifik bir kök neden ("Element bulunamadı" değil, "name=qqqqqqqq locator'ı bulunamadı"), kanıttan
+  türetilmiş aksiyonlar, güven seviyesi yok (ürün kararıyla kaldırıldı).
+- **2026-09-27'de ölçüldü** (gpt-5-mini, `OpenAiLiveBuild7Test`): build #7 ve üç sentetik örnek log, her biri
+  3–6 sn'de ve $0.0011–0.0026 maliyetle doğru dosya:satırı, spesifik bir Türkçe kök nedeni ve 2–3 aksiyonu verdi.
+  Zayıf nokta: üçüncü aksiyon bazen genel kalıyor.
 
 ## API
 
-| Endpoint | Returns |
+| Endpoint | Döndürdüğü |
 |---|---|
-| `POST /api/v1/analysis/build` `{"buildUrl": "..."}` | runs + stores the analysis; the response below, **with** `generatedPrompt` |
-| `GET /api/v1/analyses` | the history, newest first: `id, jobName, jobPath, buildNumber, buildUrl, buildStatus, analysisStatus, errorCategory, headline, analyzedAt` (no logs, no `result_json`) |
-| `GET /api/v1/analyses/{id}` | one stored analysis in the same shape as the POST response, **without** `generatedPrompt` (never stored); 404 if missing |
+| `POST /api/v1/analysis/build` `{"buildUrl": "..."}` | analizi çalıştırır + kaydeder; aşağıdaki cevap, `generatedPrompt` **ile** |
+| `GET /api/v1/analyses` | geçmiş, en yenisi önce: `id, jobName, jobPath, buildNumber, buildUrl, buildStatus, analysisStatus, errorCategory, headline, analyzedAt` (log yok, `result_json` yok) |
+| `GET /api/v1/analyses/{id}` | kaydedilmiş tek bir analiz, POST cevabıyla aynı yapıda, `generatedPrompt` **olmadan** (hiç saklanmaz); yoksa 404 |
 
-`buildUrl` is parsed by `domain/model/JenkinsBuildUrl`: `/job/Team/job/UI-Test/125/` → job `Team/UI-Test`, build
-`125`; trailing parts like `/console`, query and fragment are ignored; a context path and port are kept. Blank →
-400; not a Jenkins build URL (no `/job/<name>/<number>/`, Blue Ocean, `lastFailedBuild`, multibranch names with
-`/`) → **400 before anything runs**. The log is always fetched from the configured `JENKINS_URL`; the URL's host is
-not used for that.
+`buildUrl`'yi `domain/model/JenkinsBuildUrl` ayrıştırır: `/job/Team/job/UI-Test/125/` → job `Team/UI-Test`, build
+`125`; sondaki `/console` gibi parçalar, query ve fragment yok sayılır; context path ve port korunur. Boş → 400;
+Jenkins build URL'si değil (`/job/<name>/<number>/` yok, Blue Ocean, `lastFailedBuild`, `/` içeren multibranch
+adları) → **hiçbir şey çalışmadan 400**. Log her zaman yapılandırılmış `JENKINS_URL`'den çekilir; bunun için
+URL'deki host kullanılmaz.
 
-Response for the real failing build #7 (long values shortened):
+Gerçek, başarısız build #7 için cevap (uzun değerler kısaltıldı):
 ```json
 {
   "id": 1,
@@ -315,7 +327,7 @@ Response for the real failing build #7 (long values shortened):
   "locatorValue": "qqqqqqqq",
   "stackTrace": "org.openqa.selenium.NoSuchElementException: no such element ... Session ID ... at ...",
   "relevantLogSnippet": "Scenario: Open Google ... * Arama kutusuna tıkla. ... [INFO] BUILD FAILURE ... Finished: FAILURE",
-  "last200Lines": "<raw log tail>",
+  "last200Lines": "<ham log sonu>",
   "generatedPrompt": "Sen bir Jenkins build hatası karar destek sistemisin. ...",
   "aiAnalysis": "🚨 KÖK NEDEN\nname=qqqqqqqq locator'ı bulunamadı; ...\n📍 KONUM\nExampleSteps.java:28\nclickSearchBox()\n✅ AKSİYON\n- ...",
   "rootCauseAnalysis": {
@@ -326,7 +338,7 @@ Response for the real failing build #7 (long values shortened):
   "testContext": { "scenario": "Open Google", "step": "Arama kutusuna tıkla.", "featureFile": "src/test/resources/features/Example.feature", "featureLine": 6 },
   "testSummary": { "total": 1, "passed": 0, "failed": 1, "skipped": 0 },
   "aiSummary": null,
-  "failureGroups": [{ "id": "G1", "failureCount": 1, "aiStatus": "ANALYZED", "...": "see below" }],
+  "failureGroups": [{ "id": "G1", "failureCount": 1, "aiStatus": "ANALYZED", "...": "aşağıya bakın" }],
   "provider": "OPENAI",
   "model": "gpt-5-mini-2025-08-07",
   "promptTokens": 5880,
@@ -337,8 +349,8 @@ Response for the real failing build #7 (long values shortened):
 }
 ```
 
-A build with **several failed tests** additionally fills `aiSummary` and one entry per group (and has
-`rootCauseAnalysis: null`; `aiAnalysis` is the 🚨 BUILD ÖZETİ / 🧩 HATA GRUPLARI text):
+**Birden fazla başarısız testi** olan bir build ek olarak `aiSummary`'yi ve grup başına bir girdiyi doldurur
+(`rootCauseAnalysis: null` olur; `aiAnalysis` 🚨 BUILD ÖZETİ / 🧩 HATA GRUPLARI metnidir):
 ```json
 "testSummary": { "total": 30, "passed": 20, "failed": 10, "skipped": 0 },
 "aiSummary": "10 başarısız testin 5'i #login-btn ...; gruplar arasında ortak bir neden kanıtlanamadı.",
@@ -348,7 +360,7 @@ A build with **several failed tests** additionally fills `aiSummary` and one ent
   "failureCount": 5,
   "exceptionType": "org.openqa.selenium.NoSuchElementException", "message": "no such element: ...",
   "exceptionFile": "LoginSteps.java", "exceptionLine": 31,
-  "stackTrace": "<the representative's full exception block>", "logExcerpt": null,
+  "stackTrace": "<temsilcinin tam exception bloğu>", "logExcerpt": null,
   "aiStatus": "ANALYZED", "rootCause": "...", "actions": ["..."], "aiNote": null,
   "failures": [{
     "testContext": { "scenario": "Hatalı giriş 6", "step": "Giriş butonuna tıkla.", "featureFile": "src/test/resources/features/Shop.feature", "featureLine": 30 },
@@ -358,412 +370,429 @@ A build with **several failed tests** additionally fills `aiSummary` and one ent
 }]
 ```
 
-Field notes:
-- Every extracted field is best-effort: `null` means "not found", never a guess.
-- The flat single-failure fields (`failedScenario` … `stackTrace`) describe the build's **primary** failure.
-- `testContext` (scenario, step, featureFile, featureLine = line of the step) is set when the failure comes from a
-  test; `null` for Maven / Jenkins / infrastructure failures — the frontend's only rule for "IDE view or plain
-  error card". Each entry of `failureGroups[].failures` carries its own `testContext`.
-- `testSummary` is `null` when the log has no summary line; a single count is `null` when the format does not
-  print it.
-- `failureGroups` is `[]` when no failed test was found and for analyses stored before multi-failure support.
-  Only the representative's stack trace and log excerpt are kept (per group), not one per failed test.
-- `aiStatus`: `ANALYZED` / `SKIPPED` / `FAILED`, with the reason in `aiNote` (see [Asking the LLM](#4-asking-the-llm)).
-- `generatedPrompt` has `@JsonInclude(NON_NULL)`: present in a POST response after an LLM call (all prompts, if
-  there were several calls), absent in GET responses and for SUCCESS builds.
-- `model` is what OpenAI reports (a dated snapshot). `promptTokens` / `completionTokens` / `totalTokens` are the
-  Responses API's `input_tokens` / `output_tokens` / `total_tokens` — output includes GPT-5's hidden reasoning
-  tokens — summed over the answered calls. `estimatedCostUsd` = tokens × the configured list prices (6 decimals;
-  cached-input discounts ignored, so an upper estimate; calls that failed are not included). `responseTimeMs` is
-  the LLM time only.
-- **SUCCESS build:** no prompt, no LLM call — `errorCategory` = `NONE`, error fields, `testContext`,
-  `rootCauseAnalysis` and usage fields `null`, `failureGroups` `[]`, `aiAnalysis` = "Build başarıyla tamamlandı.
-  Analiz gerektiren bir hata tespit edilmedi."; `testSummary` is still read.
-- **Errors:** 400 validation / not a build URL; Jenkins non-2xx → same status (401/403 = bad or missing
-  credentials, 404 = no such job/build); Jenkins unreachable → 502; OpenAI unreachable / timeout / non-2xx
-  (401 wrong key, 429 rate limit or quota) / empty or refused answer → 502 `{"error": "AI analysis failed: ..."}`.
-  Failed analyses are not stored.
+Alan notları:
+- Çıkarılan her alan elden geldiğince doldurulur: `null` "bulunamadı" demektir, asla tahmin değildir.
+- Düz tek hata alanları (`failedScenario` … `stackTrace`) build'in **birincil** hatasını anlatır.
+- `testContext` (scenario, step, featureFile, featureLine = step'in satırı) hata bir testten geliyorsa doludur;
+  Maven / Jenkins / altyapı hatalarında `null`'dır — frontend'in "IDE görünümü mü, sade hata kartı mı" için tek
+  kuralı. `failureGroups[].failures`'ın her girdisi kendi `testContext`'ini taşır.
+- Logda özet satırı yoksa `testSummary` `null`'dır; format bir sayıyı yazdırmıyorsa o sayı `null`'dır.
+- Hiç başarısız test bulunamadığında ve çoklu hata desteğinden önce kaydedilmiş analizlerde `failureGroups` `[]`'dir.
+  Her başarısız test için değil, grup başına yalnızca temsilcinin stack trace'i ve log alıntısı saklanır.
+- `aiStatus`: `ANALYZED` / `SKIPPED` / `FAILED`, nedeni `aiNote`'ta (bkz. [LLM çağrısı](#4-llm-çağrısı)).
+- `generatedPrompt` `@JsonInclude(NON_NULL)` taşır: bir LLM çağrısından sonraki POST cevabında bulunur (birden fazla
+  çağrı olduysa tüm prompt'lar), GET cevaplarında ve SUCCESS build'lerde yoktur.
+- `model`, OpenAI'ın bildirdiği değerdir (tarihli bir snapshot). `promptTokens` / `completionTokens` /
+  `totalTokens`, Responses API'nin `input_tokens` / `output_tokens` / `total_tokens` değerleridir — çıktı, GPT-5'in
+  gizli reasoning token'larını içerir — ve cevaplanan çağrılar üzerinden toplanır. `estimatedCostUsd` = token'lar ×
+  yapılandırılmış liste fiyatları (6 ondalık; önbellekli girdi indirimleri yok sayılır, yani üst tahmin; başarısız
+  çağrılar dahil değil). `responseTimeMs` yalnızca LLM süresidir.
+- **SUCCESS build:** prompt yok, LLM çağrısı yok — `errorCategory` = `NONE`; hata alanları, `testContext`,
+  `rootCauseAnalysis` ve kullanım alanları `null`; `failureGroups` `[]`; `aiAnalysis` = "Build başarıyla
+  tamamlandı. Analiz gerektiren bir hata tespit edilmedi."; `testSummary` yine de okunur.
+- **Hatalar:** 400 doğrulama / build URL'si değil; Jenkins 2xx dışı → aynı durum kodu (401/403 = hatalı veya eksik
+  kimlik bilgisi, 404 = böyle bir job/build yok); Jenkins'e ulaşılamıyor → 502; OpenAI'a ulaşılamıyor / zaman
+  aşımı / 2xx dışı (401 yanlış anahtar, 429 hız sınırı veya kota) / boş veya reddedilmiş cevap → 502
+  `{"error": "AI analysis failed: ..."}`. Başarısız analizler kaydedilmez.
 
-## Database
+## Veritabanı
 
-One table, **`analyses`** — one analysed Jenkins build. Schema by Flyway (`src/main/resources/db/migration`);
-Hibernate only validates it (`ddl-auto: validate`).
+Tek tablo, **`analyses`** — her satır analiz edilmiş bir Jenkins build'i. Şema Flyway ile
+(`src/main/resources/db/migration`); Hibernate yalnızca doğrular (`ddl-auto: validate`).
 
-- `V1__init_schema.sql` created users / projects / project_members / pipelines / analyses;
-  `V2__drop_projects_and_pipelines.sql` removed everything but `analyses` (product decision: the build URL alone
-  identifies an analysis). **Never edit an applied migration; add a new one (`V3__…`).**
-- Columns: Jenkins (`build_url, job_name, job_path, build_number, build_status`), history list
-  (`analysis_status, error_category, exception_type, headline`), result (`error_reason, result_json, relevant_logs,
+- `V1__init_schema.sql` users / projects / project_members / pipelines / analyses tablolarını oluşturdu;
+  `V2__drop_projects_and_pipelines.sql` `analyses` dışındaki her şeyi kaldırdı (ürün kararı: bir analizi tek başına
+  build URL'si tanımlar). **Uygulanmış bir migration'ı asla düzenlemeyin; yenisini ekleyin (`V3__…`).**
+- Kolonlar: Jenkins (`build_url, job_name, job_path, build_number, build_status`), geçmiş listesi
+  (`analysis_status, error_category, exception_type, headline`), sonuç (`error_reason, result_json, relevant_logs,
   last_200_lines`), LLM (`model, total_tokens, estimated_cost_usd`), `created_at, analyzed_at`.
-- `result_json` (TEXT, Jackson) is the analysis response without the prompt, the logs and the header fields (they
-  have their own columns) — including `testSummary`, `aiSummary` and every failure group with every failed test.
-  **The prompt and the full console log are never stored** (the log stays on Jenkins).
-- `analysis_status`: `COMPLETED` · `SKIPPED` (SUCCESS build, no LLM call) · `UNSTRUCTURED` (no usable model answer) ·
-  `PARTIAL` (some failure groups have no AI answer — over the call limit, a failed call, or evidence not sent).
-- `headline` (history label): simple exception name, else the error category; "Build başarılı" for SUCCESS;
-  "10 başarısız test, 3 hata grubu" for several failed tests. `exception_type` is the primary failure's type.
-- `error_reason`: the root cause, the build summary, or the raw answer.
-- Every analysis is a new row — analysing the same build twice gives two rows. No authentication: everybody who
-  can reach the app sees the whole history.
-- To look at the data: pgAdmin → `build_analyzer` → `analyses`, or
-  `psql -h localhost -U build_analyzer_user -d build_analyzer` (psql is in `C:\Program Files\PostgreSQL\18\bin`).
+- `result_json` (TEXT, Jackson), prompt, loglar ve başlık alanları (kendi kolonları var) hariç analiz cevabıdır —
+  `testSummary`, `aiSummary` ve her başarısız testiyle birlikte her hata grubu dahil. **Prompt ve konsol logunun
+  tamamı asla saklanmaz** (log Jenkins'te kalır).
+- `analysis_status`: `COMPLETED` · `SKIPPED` (SUCCESS build, LLM çağrısı yok) · `UNSTRUCTURED` (modelden
+  kullanılabilir cevap yok) · `PARTIAL` (bazı hata gruplarının AI cevabı yok — çağrı sınırı aşıldı, bir çağrı
+  başarısız oldu veya kanıt gönderilmedi).
+- `headline` (geçmiş etiketi): basit exception adı, yoksa hata kategorisi; SUCCESS için "Build başarılı"; birden
+  fazla başarısız testte "10 başarısız test, 3 hata grubu". `exception_type` birincil hatanın tipidir.
+- `error_reason`: kök neden, build özeti veya ham cevap.
+- Her analiz yeni bir satırdır — aynı build'i iki kez analiz etmek iki satır verir. Kimlik doğrulama yok:
+  uygulamaya erişebilen herkes tüm geçmişi görür.
+- Veriye bakmak için: pgAdmin → `build_analyzer` → `analyses`, ya da
+  `psql -h localhost -U build_analyzer_user -d build_analyzer` (psql `C:\Program Files\PostgreSQL\18\bin` içinde).
 
 ## Frontend
 
-`frontend/` — React 19, TypeScript, Vite, MUI 9, React Router 8; backend calls with the browser's `fetch`.
-Deliberately small (lean V1): no Redux/Zustand/TanStack Query — state is `useState`/`useEffect` in the page or
-component; flat folders, no feature/domain/mapper layers. The long frontend design document written early on
-(kept outside the repo) is the product vision, not the implemented scope.
+`frontend/` — React 19, TypeScript, Vite, MUI 9, React Router 8; backend çağrıları tarayıcının `fetch`'i ile.
+Bilerek küçük (yalın V1): Redux/Zustand/TanStack Query yok — state, sayfada veya bileşende
+`useState`/`useEffect` ile tutulur; düz klasörler, feature/domain/mapper katmanı yok. Başta yazılan uzun frontend
+tasarım dokümanı (repo dışında tutuluyor) ürün vizyonudur, uygulanan kapsam değil.
 
 ```
 src/
-  api/analysisApi.ts        every backend call + toAnalysis() (backend response → what the screens show)
-  types/analysis.ts         AnalysisResponse (backend), Analysis (screens), AnalysisSummary (history row),
+  api/analysisApi.ts        tüm backend çağrıları + toAnalysis() (backend cevabı → ekranların gösterdiği)
+  types/analysis.ts         AnalysisResponse (backend), Analysis (ekranlar), AnalysisSummary (geçmiş satırı),
                             TestContext, TestSummary, FailureGroup, TestFailure
-  pages/                    DashboardPage (URL input + history), AnalysisPage (/analyses/:id), HistoryPage (/history)
-  components/               AnalyzeForm, HistoryList, AiAnalysis (single view + failure-group cards),
-                            TestContextView (IDE-like), LogViewer, StatusChip, Layout, Sidebar
-  utils/jenkinsUrl.ts       URL parser for instant form feedback (the backend re-parses; JenkinsBuildUrl is authoritative)
-  utils/format.ts           date, test-summary and type-name formatting
-  theme.ts                  MUI theme + monospace font
+  pages/                    DashboardPage (URL girişi + geçmiş), AnalysisPage (/analyses/:id), HistoryPage (/history)
+  components/               AnalyzeForm, HistoryList, AiAnalysis (tekli görünüm + hata grubu kartları),
+                            TestContextView (IDE benzeri), LogViewer, StatusChip, Layout, Sidebar
+  utils/jenkinsUrl.ts       anında form geri bildirimi için URL ayrıştırıcı (backend yeniden ayrıştırır; esas olan JenkinsBuildUrl)
+  utils/format.ts           tarih, test özeti ve tip adı biçimlendirme
+  theme.ts                  MUI teması + monospace font
 ```
 
 ```
-npm run dev      # http://localhost:5173, /api proxied to :8090
+npm run dev      # http://localhost:5173, /api istekleri :8090'a yönlendirilir
 npm test         # Vitest
-npm run build    # type check + production bundle in frontend/dist
+npm run build    # tip kontrolü + frontend/dist içine production paketi
 ```
 
-- Flow: `DashboardPage` (URL → `AnalyzeForm` → `POST /api/v1/analysis/build`) → `AnalysisPage`
-  (`GET /api/v1/analyses/{id}`, tabs AI Analysis / Relevant Logs) · `HistoryList` (`GET /api/v1/analyses`).
-- **Render rules:** `ai === null` → success message. More than one failed test in `failureGroups` → build
-  summary + group cards. Otherwise `testContext` decides: not null → IDE-like view, null → HATA ÖZETİ card. The
-  frontend knows no test framework; every `testContext` field is optional.
-- A group card's test list is a real list (`ul > li > button`); the selected test opens in `TestContextView`.
-  Cards are keyed by analysis id + group id, so another analysis starts with its own first test selected.
-- `index.html` uses `lang="en"` on purpose: with `tr`, MUI's upper-casing turns "Build" into "BUİLD"; Turkish
-  headings are written in upper case in the source ("HATA SEBEBİ").
+- Akış: `DashboardPage` (URL → `AnalyzeForm` → `POST /api/v1/analysis/build`) → `AnalysisPage`
+  (`GET /api/v1/analyses/{id}`, AI Analysis / Relevant Logs sekmeleri) · `HistoryList` (`GET /api/v1/analyses`).
+- **Gösterim kuralları:** `ai === null` → başarı mesajı. `failureGroups`'ta birden fazla başarısız test → build
+  özeti + grup kartları. Aksi halde `testContext` karar verir: null değil → IDE benzeri görünüm, null → HATA ÖZETİ
+  kartı. Frontend hiçbir test framework'ünü bilmez; `testContext`'in her alanı opsiyoneldir.
+- Bir grup kartındaki test listesi gerçek bir listedir (`ul > li > button`); seçilen test `TestContextView`'da
+  açılır. Kartların key'i analiz id'si + grup id'sidir, böylece başka bir analiz kendi ilk testi seçili olarak
+  başlar.
+- `index.html` bilerek `lang="en"` kullanır: `tr` ile MUI'nin büyük harfe çevirmesi "Build"i "BUİLD" yapar; Türkçe
+  başlıklar kaynakta büyük harfle yazılır ("HATA SEBEBİ").
 
-## Architecture
+## Mimari
 
-Hexagonal (Ports & Adapters): **infrastructure → application → domain**, the domain imports nothing
-framework-related, the application never imports `infrastructure.*` (enforced by `ArchitectureBoundaryTest`).
+Hexagonal (Ports & Adapters): **infrastructure → application → domain**; domain framework'le ilgili hiçbir şey
+import etmez, application asla `infrastructure.*` import etmez (`ArchitectureBoundaryTest` ile zorlanır).
 
 ```
 POST /api/v1/analysis/build
   → BuildAnalysisController (api)
-    → JenkinsBuildUrl.parse(buildUrl)                                              (domain; 400 if invalid)
+    → JenkinsBuildUrl.parse(buildUrl)                                              (domain; geçersizse 400)
     → AnalyzeBuildUseCase → AnalyzeBuildService (application)
         → BuildSourcePort → JenkinsBuildSourceAdapter → JenkinsHttpClient → GET /job/{a}/job/{b}/{n}/consoleText
         → BuildContextBuilder → BuildAnalysisContext (domain)
-              status · TestSummaryExtractor · ExceptionBlockExtractor · ScenarioExtractor · StepExtractor
-              · InteractionExtractor[] · ErrorClassifier · RelevantLogExtractor · tail
-              · FailureExtractor → FailureGrouper (every failed test, grouped)
-        → SUCCESS → fixed message
-        → ≤ 1 failed test → PromptBuilder.build → LlmProvider [ROOT_CAUSE] → RootCauseParser → RootCauseFormatter
-        → several → PromptBuilder.buildGroupPrompts → LlmProvider [FAILURE_GROUPS] × ≤ 3 → parseGroups → formatGroups
+              durum · TestSummaryExtractor · ExceptionBlockExtractor · ScenarioExtractor · StepExtractor
+              · InteractionExtractor[] · ErrorClassifier · RelevantLogExtractor · son satırlar
+              · FailureExtractor → FailureGrouper (tüm başarısız testler, gruplanmış)
+        → SUCCESS → sabit mesaj
+        → ≤ 1 başarısız test → PromptBuilder.build → LlmProvider [ROOT_CAUSE] → RootCauseParser → RootCauseFormatter
+        → birden fazla → PromptBuilder.buildGroupPrompts → LlmProvider [FAILURE_GROUPS] × ≤ 3 → parseGroups → formatGroups
         → BuildAnalysisResult (context, prompt(s), aiAnalysis, rootCauseAnalysis, llmMetrics, aiSummary, groupAnalyses)
     → BuildAnalysisResponseMapper.toEntity → AnalysisRepository.save → PostgreSQL
-    → BuildAnalysisResponseMapper.toResponse → AnalyzeBuildResponse (DTO, with the stored id)
+    → BuildAnalysisResponseMapper.toResponse → AnalyzeBuildResponse (DTO, kaydedilen id ile)
 
 GET /api/v1/analyses       → AnalysisRepository.findAllByOrderByAnalyzedAtDesc()  (Summary projection)
-GET /api/v1/analyses/{id}  → AnalysisRepository.findById → mapper.toResponse(entity)  (404 if missing)
+GET /api/v1/analyses/{id}  → AnalysisRepository.findById → mapper.toResponse(entity)  (yoksa 404)
 ```
 
-The analysis core (`application`, `domain`) does not know the database; storing happens in the controller after
-`AnalyzeBuildService` returns.
+Analiz çekirdeği (`application`, `domain`) veritabanını bilmez; kaydetme, `AnalyzeBuildService` döndükten sonra
+controller'da yapılır.
 
-**LLM provider independence:**
+**LLM sağlayıcı bağımsızlığı:**
 ```
-application (knows only the port)          infrastructure (one adapter per provider)
+application (yalnızca port'u bilir)        infrastructure (sağlayıcı başına bir adapter)
 ┌──────────────────────────────┐           ┌──────────────────────────────────────────┐
 │ AnalyzeBuildService          │           │ llm/openai/OpenAiConfiguration           │
 │   └─ LlmProvider (port)  ◄───┼───────────┤   @ConditionalOnProperty llm.provider=   │
-│        complete(LlmRequest)  │           │     OPENAI (default)                     │
+│        complete(LlmRequest)  │           │     OPENAI (varsayılan)                  │
 │        → LlmCompletion       │           │   → OpenAiProvider + OpenAiProperties    │
-└──────────────────────────────┘           │ llm/TokenPricing (shared cost estimate)  │
+└──────────────────────────────┘           │ llm/TokenPricing (ortak maliyet tahmini) │
                                            └──────────────────────────────────────────┘
 ```
-- `llm.provider` (`LLM_PROVIDER`, default `OPENAI`) selects the adapter; exactly one `LlmProvider` bean exists; an
-  inactive provider's properties are neither bound nor required.
-- **Adding a provider** (e.g. Anthropic, or Ollama again) = one package `infrastructure/llm/<provider>/`:
-  1. `<Provider>Provider implements LlmProvider` — returns `LlmCompletion`, wraps every transport error in
-     `LlmAnalysisException` (never let `RestClientResponseException` escape: the API layer maps that type to Jenkins
-     errors) and enforces `LlmRequest.responseSchema` its own way;
-  2. `<Provider>Properties` (`@ConfigurationProperties("<provider>")`, `@Validated`, key from env only);
+- `llm.provider` (`LLM_PROVIDER`, varsayılan `OPENAI`) adapter'ı seçer; tam olarak bir `LlmProvider` bean'i vardır;
+  aktif olmayan bir sağlayıcının ayarları ne bağlanır ne de zorunludur.
+- **Sağlayıcı eklemek** (ör. Anthropic veya yeniden Ollama) = tek bir paket, `infrastructure/llm/<provider>/`:
+  1. `<Provider>Provider implements LlmProvider` — `LlmCompletion` döndürür, her taşıma hatasını
+     `LlmAnalysisException` içine sarar (`RestClientResponseException`'ın dışarı kaçmasına asla izin vermeyin: API
+     katmanı bu tipi Jenkins hatalarına eşler) ve `LlmRequest.responseSchema`'yı kendi yöntemiyle uygular;
+  2. `<Provider>Properties` (`@ConfigurationProperties("<provider>")`, `@Validated`, anahtar yalnızca ortamdan);
   3. `<Provider>Configuration` — `@ConditionalOnProperty(prefix = "llm", name = "provider", havingValue = "<NAME>")`
-     + `@EnableConfigurationProperties`, declares the bean;
-  4. a `<provider>:` block in `application.yml` and an adapter test with an in-process HTTP stub.
-  Nothing in application, domain, api or `PromptBuilder` changes.
+     + `@EnableConfigurationProperties`, bean'i tanımlar;
+  4. `application.yml` içinde bir `<provider>:` bloğu ve in-process HTTP stub'lı bir adapter testi.
+  application, domain, api veya `PromptBuilder` içinde hiçbir şey değişmez.
 
-## Package / class map
-Base package: `com.company.buildanalyzer`
+## Paket / sınıf haritası
+Temel paket: `com.company.buildanalyzer`
 
-### domain (pure Java — no Spring, no framework imports)
+### domain (saf Java — Spring yok, framework import'u yok)
 - `model/BuildAnalysisContext` — buildStatus, `FailedScenario failedScenario`, `FailedStep failedStep`,
-  exceptionType, `ErrorCategory errorCategory`, stackTrace (full block), `FailureLocation failureLocation`,
-  `FailedInteraction failedInteraction` (the primary failure), relevantLogSnippet, last200Lines,
-  `TestSummary testSummary`, `List<FailureGroup> failureGroups`. `isSuccessful()` / static `isSuccessStatus(String)`
-  is the single source of truth for "SUCCESS, no analysis needed"; `failureCount()` / `hasMultipleFailures()`
-  choose the flow.
-- `model/TestSummary` — total, passed, failed, skipped (`Integer`, `null` = not printed).
-- `model/TestFailure` — one failed test: `FailedScenario scenario` (a plain test: the runner's test name, no
-  file/line), `FailedStep step`, exceptionType, message, stackTrace, `FailureLocation`, `FailedInteraction`,
-  logExcerpt. Every field but `scenario` may be `null`.
-- `model/FailureGroup` — id (`G1`…), signature, failures (first = representative).
+  exceptionType, `ErrorCategory errorCategory`, stackTrace (tam blok), `FailureLocation failureLocation`,
+  `FailedInteraction failedInteraction` (birincil hata), relevantLogSnippet, last200Lines,
+  `TestSummary testSummary`, `List<FailureGroup> failureGroups`. `isSuccessful()` / static
+  `isSuccessStatus(String)` "SUCCESS, analiz gerekmez" için tek doğru kaynaktır; `failureCount()` /
+  `hasMultipleFailures()` akışı seçer.
+- `model/TestSummary` — total, passed, failed, skipped (`Integer`, `null` = yazdırılmamış).
+- `model/TestFailure` — tek bir başarısız test: `FailedScenario scenario` (düz bir test: runner'ın test adı,
+  dosya/satır yok), `FailedStep step`, exceptionType, message, stackTrace, `FailureLocation`, `FailedInteraction`,
+  logExcerpt. `scenario` dışındaki her alan `null` olabilir.
+- `model/FailureGroup` — id (`G1`…), signature, failures (ilki = temsilci).
 - `model/FailureGroupAnalysis` — groupId, status (`ANALYZED` / `SKIPPED` / `FAILED`), rootCause, actions (≤ 3), note.
 - `model/FailedScenario` — name, featureFile, featureLine (`Open Google`, `src/test/resources/features/Example.feature`, `4`).
 - `model/FailedStep` — text, featureFile, featureLine (`Arama kutusuna tıkla.`, `Example.feature`, `6`).
 - `model/FailureLocation` — stepDefinition, file, line (`stepdefinitions.ExampleSteps.clickSearchBox`, `ExampleSteps.java`, `28`).
-- `model/FailedInteraction` — tool-neutral "command against a target": tool, command, locatorType, locatorValue
-  (`Selenium`, `findElement`, `name`, `qqqqqqqq`; Playwright would be `toBeVisible` + `getByRole` …).
-- `model/LlmMetrics` — provider, model, prompt/completion/total tokens, responseTimeMs, estimatedCostUsd.
+- `model/FailedInteraction` — araçtan bağımsız "bir hedefe karşı komut": tool, command, locatorType, locatorValue
+  (`Selenium`, `findElement`, `name`, `qqqqqqqq`; Playwright'ta `toBeVisible` + `getByRole` … olurdu).
+- `model/LlmMetrics` — provider, model, prompt/completion/total token'lar, responseTimeMs, estimatedCostUsd.
 - `model/BuildAnalysisResult` — context, generatedPrompt, aiAnalysis, `RootCauseAnalysis rootCauseAnalysis`,
-  `LlmMetrics llmMetrics`, aiSummary, `List<FailureGroupAnalysis> groupAnalyses`. What the use case returns.
-- `model/RootCauseAnalysis` — rootCause, file, line, method, actions (never null, immutable, max 3);
+  `LlmMetrics llmMetrics`, aiSummary, `List<FailureGroupAnalysis> groupAnalyses`. Use case'in döndürdüğü şey.
+- `model/RootCauseAnalysis` — rootCause, file, line, method, actions (asla null değil, değiştirilemez, en fazla 3);
   `withFallbackLocation(FailureLocation)`.
-- `model/JenkinsBuildUrl` — `parse(url)` → jobPath, buildNumber, normalised url; `IllegalArgumentException` otherwise.
-- `model/ErrorCategory` — SELENIUM, MAVEN, CUCUMBER, JENKINS, INFRA, UNKNOWN, NONE (successful build).
+- `model/JenkinsBuildUrl` — `parse(url)` → jobPath, buildNumber, normalleştirilmiş url; aksi halde
+  `IllegalArgumentException`.
+- `model/ErrorCategory` — SELENIUM, MAVEN, CUCUMBER, JENKINS, INFRA, UNKNOWN, NONE (başarılı build).
 
-### application (use cases, parsing, prompts — may use Spring stereotypes; depends only on domain and ports)
-**Use case & ports**
+### application (use case'ler, ayrıştırma, prompt'lar — Spring stereotype'ları kullanabilir; yalnızca domain'e ve port'lara bağımlı)
+**Use case ve port'lar**
 - `usecase/AnalyzeBuildUseCase` — inbound port: `BuildAnalysisResult analyze(String jobName, int buildNumber)`.
-- `usecase/AnalyzeBuildService` — owns the flow: log → context → SUCCESS short-circuit → single-failure or group
-  flow (calls, per-group statuses, summed metrics) → result. No HTTP, no provider knowledge.
+- `usecase/AnalyzeBuildService` — akışın sahibi: log → context → SUCCESS kısa devresi → tek hata veya grup akışı
+  (çağrılar, grup başına durumlar, toplanmış metrikler) → sonuç. HTTP yok, sağlayıcı bilgisi yok.
 - `port/out/BuildSourcePort` — `String fetchConsoleLog(String jobName, int buildNumber)`.
-- `port/out/LlmProvider` — `LlmCompletion complete(LlmRequest)`; `LlmRequest` = prompt + optional
-  `LlmResponseSchema` (name + JSON schema as a plain map); `LlmCompletion` = text, provider, model, tokens, cost;
-  `LlmAnalysisException` — the only error type an adapter throws.
+- `port/out/LlmProvider` — `LlmCompletion complete(LlmRequest)`; `LlmRequest` = prompt + opsiyonel
+  `LlmResponseSchema` (ad + düz map olarak JSON şeması); `LlmCompletion` = metin, sağlayıcı, model, token'lar,
+  maliyet; `LlmAnalysisException` — bir adapter'ın fırlattığı tek hata tipi.
 
-**Context extraction (`context/`)** — the static extractors are package-private
-- `BuildContextBuilder` — orchestrates everything below; picks the primary failure; keeps the last 200 lines.
-- `ExceptionBlockExtractor` — `isHeader` / `extractAt` / `extract` (first block). A header is a whole fully-qualified
-  `…Exception|Error|Failure` token (ANSI codes stripped). Keeps the **full** block unclipped: every message line
-  (max 30 as a runaway guard) and every frame (`at`, `Caused by:`, `Suppressed:`, `... n more`); ends at a blank
-  line, a new log record (`[INFO]`, `[ERROR]`, `[Pipeline]`, …) or the first non-frame after frames. First
-  application frame (package not in `FRAMEWORK_PACKAGES`; `at [loader/][module/]pkg.Class.method(File.java:N)`)
-  → `FailureLocation`; fallback: the Cucumber step comment `# pkg.Class.method()` above the header.
-- `ScenarioExtractor` — scenario lines (`Scenario`, `Scenario Outline/Template`, `Example`, `Senaryo`, `Senaryo
-  taslağı`, `Örnek`; clean name, feature file with spaces / `classpath:` / Windows paths, ANSI stripped;
-  `cleanName` keeps a `#` inside a name like `Order #12`) and the `Failed scenarios:` lists (URL-decoded). For the
-  primary failure: the first listed entry, else the last scenario before the exception, else the first.
-- `StepExtractor` — the step pseudo-frame `at ✽.<step>(…/<file>.feature:<line>)` (`✽` often arrives as `?`) first;
-  else the nearest pretty step line above the exception (English + Turkish keywords), never crossing a scenario
-  header or, for a failed test, the start of that test's output.
-- `TestSummaryExtractor`, `FailureExtractor`, `FailureGrouper` — see [How an analysis works](#how-an-analysis-works).
-- `InteractionExtractor` (strategy interface) + `SeleniumInteractionExtractor` — `Command: [<session>, findElement
-  {using=name, value=…}]` → command + locator, else the message's `{"method":…,"selector":…}`. Adding a tool =
-  adding an implementation.
-- `RelevantLogExtractor` — data-driven NOISE / SIGNALS / MARKERS rules; warnings never trigger on their own;
-  dedup ignoring `[LEVEL]` prefixes; lines clipped at 300 chars; ≤ 120 lines (1/3 head + 2/3 tail); no signal → last
-  40 non-noise lines. Tested on Selenium, Cypress, Playwright, pytest, NUnit and Karate samples.
-- `classifier/ErrorClassifier` — ordered `Rule{ErrorCategory, keyword Pattern}` list, first match wins.
+**Context çıkarımı (`context/`)** — statik extractor'lar package-private
+- `BuildContextBuilder` — aşağıdaki her şeyi yönetir; birincil hatayı seçer; son 200 satırı tutar.
+- `ExceptionBlockExtractor` — `isHeader` / `extractAt` / `extract` (ilk blok). Başlık, tam nitelikli
+  `…Exception|Error|Failure` token'ının tamamıdır (ANSI kodları temizlenmiş). Bloğun **tamamını** kırpmadan tutar:
+  her mesaj satırı (kontrolden çıkmaya karşı en fazla 30) ve her frame (`at`, `Caused by:`, `Suppressed:`,
+  `... n more`); boş bir satırda, yeni bir log kaydında (`[INFO]`, `[ERROR]`, `[Pipeline]`, …) veya frame'lerden
+  sonraki ilk frame olmayan satırda biter. İlk uygulama frame'i (paketi `FRAMEWORK_PACKAGES` içinde olmayan;
+  `at [loader/][module/]pkg.Class.method(File.java:N)`) → `FailureLocation`; yedek: başlığın üstündeki Cucumber
+  step yorumu `# pkg.Class.method()`.
+- `ScenarioExtractor` — senaryo satırları (`Scenario`, `Scenario Outline/Template`, `Example`, `Senaryo`,
+  `Senaryo taslağı`, `Örnek`; temiz ad, boşluklu / `classpath:` / Windows yollu feature dosyası, ANSI temizlenmiş;
+  `cleanName`, `Order #12` gibi bir addaki `#`'i korur) ve `Failed scenarios:` listeleri (URL-decode edilmiş).
+  Birincil hata için: listedeki ilk girdi, yoksa exception'dan önceki son senaryo, yoksa ilki.
+- `StepExtractor` — önce step sözde frame'i `at ✽.<step>(…/<file>.feature:<line>)` (`✽` çoğu zaman `?` olarak
+  gelir); yoksa exception'ın üstündeki en yakın pretty step satırı (İngilizce + Türkçe anahtar kelimeler); asla bir
+  senaryo başlığını veya — başarısız bir test için — o testin çıktısının başlangıcını aşmaz.
+- `TestSummaryExtractor`, `FailureExtractor`, `FailureGrouper` — bkz. [Bir analiz nasıl çalışır](#bir-analiz-nasıl-çalışır).
+- `InteractionExtractor` (strateji arayüzü) + `SeleniumInteractionExtractor` — `Command: [<session>, findElement
+  {using=name, value=…}]` → komut + locator, yoksa mesajdaki `{"method":…,"selector":…}`. Yeni bir araç eklemek =
+  yeni bir implementasyon eklemek.
+- `RelevantLogExtractor` — veriye dayalı NOISE / SIGNALS / MARKERS kuralları; uyarılar tek başına asla tetiklemez;
+  `[LEVEL]` önekleri yok sayılarak tekrar ayıklama; satırlar 300 karakterde kırpılır; ≤ 120 satır (1/3 baş +
+  2/3 son); sinyal yoksa → gürültü olmayan son 40 satır. Selenium, Cypress, Playwright, pytest, NUnit ve Karate
+  örnekleriyle test edildi.
+- `classifier/ErrorClassifier` — sıralı `Rule{ErrorCategory, keyword Pattern}` listesi, ilk eşleşen kazanır.
 
-**Prompts (`prompt/`)**
-- `PromptBuilder` — `build(context)` (single failure) and `buildGroupPrompts(context)` (several); text only, in
-  Turkish, provider-agnostic; masks credentials.
+**Prompt'lar (`prompt/`)**
+- `PromptBuilder` — `build(context)` (tek hata) ve `buildGroupPrompts(context)` (birden fazla); yalnızca metin,
+  Türkçe, sağlayıcıdan bağımsız; kimlik bilgilerini maskeler.
 - `AnalysisLimits` (`analysis.*`) — `maxPromptChars`, `maxGroupsPerCall`, `maxLlmCalls`.
 
-**Answer handling (`analysis/`)**
-- `RootCauseSchema` — `ROOT_CAUSE` and `FAILURE_GROUPS` (strict: every property required, `additionalProperties:
-  false`; no `maxItems` — not every provider supports it, the parser enforces the limits).
+**Cevap işleme (`analysis/`)**
+- `RootCauseSchema` — `ROOT_CAUSE` ve `FAILURE_GROUPS` (katı: her özellik zorunlu, `additionalProperties:
+  false`; `maxItems` yok — her sağlayıcı desteklemiyor, sınırları parser uygular).
 - `RootCauseParser` — `parse` / `parseGroups`; `RootCauseFormatter` — `format` / `formatGroups`.
 
 ### api (inbound adapter — Spring web)
-- `controller/BuildAnalysisController` — the three endpoints.
-- `dto/request/AnalyzeBuildRequest` — `{ buildUrl }` + validation.
-- `dto/response/AnalyzeBuildResponse` — flat record used by POST and GET `/analyses/{id}`; nested
-  `RootCauseAnalysisResponse`, `TestContextResponse`, `TestSummaryResponse`, `FailureGroupResponse` (with
-  `TestFailureResponse` per failed test). Tool- and provider-neutral names; `failureGroups` is never `null`.
-- `mapper/BuildAnalysisResponseMapper` — domain → DTO (flattened), `testContext` rule, failure groups with their AI
-  answers, `toEntity` (row: headline, analysis status, `result_json`), `toResponse(Analysis)` (from `result_json` +
-  columns).
-- `error/GlobalExceptionHandler` — validation → 400, Jenkins `RestClientResponseException` → its status,
-  `ResourceAccessException` → 502, `LlmAnalysisException` → 502, `ResponseStatusException` → its status.
+- `controller/BuildAnalysisController` — üç endpoint.
+- `dto/request/AnalyzeBuildRequest` — `{ buildUrl }` + doğrulama.
+- `dto/response/AnalyzeBuildResponse` — POST'un ve GET `/analyses/{id}`'nin kullandığı düz record; iç içe
+  `RootCauseAnalysisResponse`, `TestContextResponse`, `TestSummaryResponse`, `FailureGroupResponse` (başarısız test
+  başına `TestFailureResponse` ile). Araçtan ve sağlayıcıdan bağımsız adlar; `failureGroups` asla `null` değildir.
+- `mapper/BuildAnalysisResponseMapper` — domain → DTO (düzleştirilmiş), `testContext` kuralı, AI cevaplarıyla
+  birlikte hata grupları, `toEntity` (satır: headline, analiz durumu, `result_json`), `toResponse(Analysis)`
+  (`result_json` + kolonlardan).
+- `error/GlobalExceptionHandler` — doğrulama → 400, Jenkins `RestClientResponseException` → kendi durum kodu,
+  `ResourceAccessException` → 502, `LlmAnalysisException` → 502, `ResponseStatusException` → kendi durum kodu.
 
-### infrastructure (outbound adapters — all Jenkins/OpenAI/HTTP/database detail lives here)
-- `persistence/Analysis` (JPA entity) and `persistence/AnalysisRepository` (Spring Data; `Summary` = history-list
-  projection, never reads the logs or `result_json`).
-- `jenkins/JenkinsBuildSourceAdapter` → `JenkinsHttpClient` (base URL, Basic auth only when a username is set,
-  `/job/<a>/job/<b>/<n>/consoleText` from the job full name, body read as **raw bytes**) → `ConsoleLogDecoder`
-  (strict UTF-8; else line by line with the windows-1254 fallback — the Turkish Windows test JVM writes cp1254);
-  `JenkinsProperties` (`jenkins.*`).
-- `llm/TokenPricing` — USD per 1M tokens → `estimateUsd`, `null` if anything is unknown.
-- `llm/openai/OpenAiConfiguration`, `OpenAiProvider` (Responses API only; `RestClient` over JDK `HttpClient` with
-  connect + read timeouts; answer = the `output_text` parts of the `message` items; usage → tokens; HTTP errors,
-  timeouts, unreadable replies, `status=failed`, refusals, empty answers and "all tokens spent on reasoning" →
-  `LlmAnalysisException`; a truncated answer with text is returned with a warning), `OpenAiResponsesRequest`
-  (`{model, input, max_output_tokens, reasoning.effort?, text.verbosity?, text.format?, store:false}`; a schema
-  becomes `text.format = {type:"json_schema", name, schema, strict:true}`; **no `temperature`** — GPT-5 rejects
-  non-default values; `store:false` so logs are not retained by OpenAI), `OpenAiResponsesResponse`,
-  `OpenAiProperties` (`openai.*`, no Java defaults).
+### infrastructure (outbound adapter'lar — tüm Jenkins/OpenAI/HTTP/veritabanı detayı burada)
+- `persistence/Analysis` (JPA entity) ve `persistence/AnalysisRepository` (Spring Data; `Summary` = geçmiş listesi
+  projection'ı, logları veya `result_json`'u asla okumaz).
+- `jenkins/JenkinsBuildSourceAdapter` → `JenkinsHttpClient` (base URL, yalnızca kullanıcı adı ayarlıysa Basic
+  auth, job'ın tam adından `/job/<a>/job/<b>/<n>/consoleText`, gövde **ham byte** olarak okunur) →
+  `ConsoleLogDecoder` (katı UTF-8; olmazsa satır satır windows-1254 yedeği — Türkçe Windows'taki test JVM'i cp1254
+  yazar); `JenkinsProperties` (`jenkins.*`).
+- `llm/TokenPricing` — 1M token başına USD → `estimateUsd`; herhangi bir değer bilinmiyorsa `null`.
+- `llm/openai/OpenAiConfiguration`, `OpenAiProvider` (yalnızca Responses API; connect + read timeout'lu JDK
+  `HttpClient` üzerinde `RestClient`; cevap = `message` öğelerinin `output_text` parçaları; usage → token'lar;
+  HTTP hataları, zaman aşımları, okunamayan cevaplar, `status=failed`, retler, boş cevaplar ve "tüm token'lar
+  reasoning'e harcandı" → `LlmAnalysisException`; metni olan ama yarım kalmış bir cevap uyarıyla döndürülür),
+  `OpenAiResponsesRequest` (`{model, input, max_output_tokens, reasoning.effort?, text.verbosity?, text.format?,
+  store:false}`; bir şema `text.format = {type:"json_schema", name, schema, strict:true}` olur; **`temperature`
+  yok** — GPT-5 varsayılan dışındaki değerleri reddeder; `store:false`, loglar OpenAI'da saklanmasın diye),
+  `OpenAiResponsesResponse`, `OpenAiProperties` (`openai.*`, Java'da varsayılan değer yok).
 
-## Configuration (`src/main/resources/application.yml`)
-Every value can be overridden by the environment variable shown. **No secret is stored in the file.**
+## Yapılandırma (`src/main/resources/application.yml`)
+Her değer, gösterilen ortam değişkeniyle ezilebilir. **Dosyada hiçbir gizli bilgi saklanmaz.**
 
-| Property | Env var | Default | Notes |
+| Ayar | Ortam değişkeni | Varsayılan | Not |
 |---|---|---|---|
-| `server.port` | — | `8090` | 8080 is the local Jenkins |
+| `server.port` | — | `8090` | 8080 yerel Jenkins'e ait |
 | `spring.datasource.url` | `DB_URL` | `jdbc:postgresql://localhost:5432/build_analyzer` | |
 | `spring.datasource.username` | `DB_USERNAME` | `build_analyzer_user` | |
-| `spring.datasource.password` | `DB_PASSWORD` | empty | env only; required to start |
-| `spring.jpa.hibernate.ddl-auto` | — | `validate` | schema only via Flyway migrations |
+| `spring.datasource.password` | `DB_PASSWORD` | boş | yalnızca ortamdan; başlamak için zorunlu |
+| `spring.jpa.hibernate.ddl-auto` | — | `validate` | şema yalnızca Flyway migration'larıyla |
 | `spring.jpa.open-in-view` | — | `false` | |
 | `jenkins.url` | `JENKINS_URL` | `http://localhost:8080` | |
-| `jenkins.username` | `JENKINS_USERNAME` | empty | empty = anonymous (this Jenkins then answers 403) |
-| `jenkins.api-token` | `JENKINS_API_TOKEN` | empty | |
+| `jenkins.username` | `JENKINS_USERNAME` | boş | boş = anonim (bu Jenkins o zaman 403 döner) |
+| `jenkins.api-token` | `JENKINS_API_TOKEN` | boş | |
 | `jenkins.log-charset` | `JENKINS_LOG_CHARSET` | `UTF-8` | |
-| `jenkins.log-fallback-charset` | `JENKINS_LOG_FALLBACK_CHARSET` | `windows-1254` | for lines that are not valid UTF-8 |
-| `analysis.max-prompt-chars` | `ANALYSIS_MAX_PROMPT_CHARS` | `60000` | several failed tests: target size of one group prompt (characters) |
-| `analysis.max-groups-per-call` | `ANALYSIS_MAX_GROUPS_PER_CALL` | `6` | failure groups per LLM call (bounds the answer length) |
-| `analysis.max-llm-calls` | `ANALYSIS_MAX_LLM_CALLS` | `3` | LLM calls per build at most; groups beyond are listed as not analysed |
-| `llm.provider` | `LLM_PROVIDER` | `OPENAI` | only `OPENAI` is implemented |
-| `openai.api-key` | `OPENAI_API_KEY` | — (**required**) | env only; startup fails without it |
-| `openai.url` | `OPENAI_URL` | `https://api.openai.com/v1` | e.g. a company proxy |
+| `jenkins.log-fallback-charset` | `JENKINS_LOG_FALLBACK_CHARSET` | `windows-1254` | geçerli UTF-8 olmayan satırlar için |
+| `analysis.max-prompt-chars` | `ANALYSIS_MAX_PROMPT_CHARS` | `60000` | birden fazla başarısız test: tek bir grup prompt'unun hedef boyutu (karakter) |
+| `analysis.max-groups-per-call` | `ANALYSIS_MAX_GROUPS_PER_CALL` | `6` | LLM çağrısı başına hata grubu (cevap uzunluğunu sınırlar) |
+| `analysis.max-llm-calls` | `ANALYSIS_MAX_LLM_CALLS` | `3` | build başına en fazla LLM çağrısı; fazlası analiz edilmemiş olarak listelenir |
+| `llm.provider` | `LLM_PROVIDER` | `OPENAI` | yalnızca `OPENAI` uygulanmış |
+| `openai.api-key` | `OPENAI_API_KEY` | — (**zorunlu**) | yalnızca ortamdan; yoksa uygulama başlamaz |
+| `openai.url` | `OPENAI_URL` | `https://api.openai.com/v1` | ör. bir şirket proxy'si |
 | `openai.model` | `OPENAI_MODEL` | `gpt-5-mini` | |
-| `openai.timeout-seconds` | `OPENAI_TIMEOUT_SECONDS` | `120` | read timeout for the whole answer |
+| `openai.timeout-seconds` | `OPENAI_TIMEOUT_SECONDS` | `120` | cevabın tamamı için read timeout |
 | `openai.connect-timeout-seconds` | `OPENAI_CONNECT_TIMEOUT_SECONDS` | `10` | |
-| `openai.max-output-tokens` | `OPENAI_MAX_OUTPUT_TOKENS` | `4000` | includes hidden reasoning tokens |
-| `openai.reasoning-effort` | `OPENAI_REASONING_EFFORT` | `low` | minimal / low / medium / high; empty = not sent |
-| `openai.verbosity` | `OPENAI_VERBOSITY` | `low` | low / medium / high; empty = not sent |
-| `openai.pricing.input-usd-per-million` | `OPENAI_INPUT_USD_PER_MILLION` | `0.25` | gpt-5-mini list price |
-| `openai.pricing.output-usd-per-million` | `OPENAI_OUTPUT_USD_PER_MILLION` | `2.00` | gpt-5-mini list price |
+| `openai.max-output-tokens` | `OPENAI_MAX_OUTPUT_TOKENS` | `4000` | gizli reasoning token'larını da içerir |
+| `openai.reasoning-effort` | `OPENAI_REASONING_EFFORT` | `low` | minimal / low / medium / high; boş = gönderilmez |
+| `openai.verbosity` | `OPENAI_VERBOSITY` | `low` | low / medium / high; boş = gönderilmez |
+| `openai.pricing.input-usd-per-million` | `OPENAI_INPUT_USD_PER_MILLION` | `0.25` | gpt-5-mini liste fiyatı |
+| `openai.pricing.output-usd-per-million` | `OPENAI_OUTPUT_USD_PER_MILLION` | `2.00` | gpt-5-mini liste fiyatı |
 
-Update the two pricing values if OpenAI changes its prices or another model is configured.
+OpenAI fiyatlarını değiştirirse veya başka bir model ayarlanırsa iki fiyat değerini güncelleyin.
 
-## Tests
+## Testler
 
-**Backend:** `mvn test` — **226 tests** (220 unit tests + 4 PostgreSQL tests + 2 opt-in live OpenAI tests). No
-external service or API key is needed: OpenAI is stubbed with an in-process HTTP server or a mock, Jenkins is
-mocked, the controller test mocks the repository, and realistic console logs come from fixtures
-(`src/test/resources/logs/`) or the `SyntheticConsoleLog` generator (any number of passed/failed Cucumber
-scenarios with Surefire's repeated reports, as in a real run).
-- `AnalysisRepositoryTest` (4 tests) runs against the **real local PostgreSQL** when `DB_PASSWORD` is set; every
-  test is rolled back, nothing stays in the database.
-- `OpenAiLiveBuild7Test` (opt-in, real API, ~$0.01, sends the logs to OpenAI) runs build #7, three sample logs and
-  a synthetic 10-failure build: `mvn test -Dtest=OpenAiLiveBuild7Test -Dopenai.live=true` (needs `OPENAI_API_KEY`;
-  answers go to `target/live-analyses.txt`).
+**Backend:** `mvn test` — **226 test** (220 birim testi + 4 PostgreSQL testi + 2 isteğe bağlı canlı OpenAI testi).
+Harici servis veya API anahtarı gerekmez: OpenAI, in-process bir HTTP sunucusu veya mock ile taklit edilir, Jenkins
+mock'lanır, controller testi repository'yi mock'lar ve gerçekçi konsol logları fixture'lardan
+(`src/test/resources/logs/`) veya `SyntheticConsoleLog` üretecinden gelir (gerçek bir koşudaki gibi Surefire'ın
+tekrarlanan raporlarıyla, istenen sayıda geçen/düşen Cucumber senaryosu).
+- `AnalysisRepositoryTest` (4 test), `DB_PASSWORD` ayarlıysa **gerçek yerel PostgreSQL**'e karşı koşar; her test
+  geri alınır (rollback), veritabanında hiçbir şey kalmaz.
+- `OpenAiLiveBuild7Test` (isteğe bağlı, gerçek API, ~$0.01, logları OpenAI'a gönderir) build #7'yi, üç örnek logu
+  ve sentetik 10 hatalı bir build'i koşar: `mvn test -Dtest=OpenAiLiveBuild7Test -Dopenai.live=true`
+  (`OPENAI_API_KEY` gerekir; cevaplar `target/live-analyses.txt`'ye yazılır).
 
-With `DB_PASSWORD` set: `Tests run: 226, Failures: 0, Errors: 0, Skipped: 2` (only the live tests skipped). On the
-developer machine `DB_PASSWORD` is a **Windows user environment variable**, so `mvn test` in any new terminal
-picks it up (IntelliJ's run configuration does not pass its env vars to tests or terminals).
+`DB_PASSWORD` ayarlıyken: `Tests run: 226, Failures: 0, Errors: 0, Skipped: 2` (yalnızca canlı testler atlanır).
+Geliştirici makinesinde `DB_PASSWORD` bir **Windows kullanıcı ortam değişkenidir**, bu yüzden yeni açılan her
+terminaldeki `mvn test` onu görür (IntelliJ'in run configuration'ı ortam değişkenlerini testlere veya terminallere
+aktarmaz).
 
-Where the multi-failure behaviour is tested:
+Çoklu hata davranışının test edildiği yerler:
 
-| Case | Tests |
+| Durum | Testler |
 |---|---|
-| one failed test keeps the single flow | `AnalyzeBuildServiceTest`, `Build7OpenAiEndToEndTest`, `MultiFailureContextTest.build7HasExactlyOneFailure` |
-| 30 scenarios / 10 failures → 10 found, counts, one row, one LLM call | `MultiFailureContextTest`, `MultiFailureAnalysisTest`, `BuildAnalysisControllerTest` |
-| the same error 10× → one group of 10 | `MultiFailureContextTest`, `MultiFailureAnalysisTest`, `FailureGrouperTest` |
-| NoSuchElement / Timeout / AssertionError apart | `MultiFailureContextTest`, `FailureGrouperTest` |
-| 1500 scenarios, few failures → one call, no passed tests in the prompt | `MultiFailureContextTest`, `MultiFailureAnalysisTest` |
-| many groups → bounded calls, nothing lost, partial failure, unreadable answers | `MultiFailureAnalysisTest`, `GroupPromptTest` |
-| missing stack trace / location → nothing invented | `MultiFailureContextTest`, `BuildAnalysisResponseMapperTest`, frontend `AiAnalysis.test` |
-| Maven / Jenkins / infrastructure → no failure groups, standard card | `MultiFailureContextTest`, frontend `AiAnalysis.test` |
-| SUCCESS → no LLM call, counts read | `AnalyzeBuildServiceTest`, `MultiFailureContextTest` |
-| persistence: one row, readable via GET, old rows readable | `AnalysisRepositoryTest` (real PostgreSQL), `BuildAnalysisResponseMapperTest`, `BuildAnalysisControllerTest` |
-| nested Jenkins URL `/job/Team/job/UI-Test/125/` | `JenkinsBuildUrlTest`, `JenkinsHttpClientTest`, frontend `jenkinsUrl.test` |
-| real-world log shapes (runner names, logged exceptions, reruns/flakes, Gradle, colours, encoded paths, REST-assured, huge lines) | `FailureExtractorTest`, `TestSummaryExtractorTest` |
-| credential masking, prompt size bounds | `PromptBuilderTest`, `GroupPromptTest` |
+| tek başarısız test tekli akışta kalır | `AnalyzeBuildServiceTest`, `Build7OpenAiEndToEndTest`, `MultiFailureContextTest.build7HasExactlyOneFailure` |
+| 30 senaryo / 10 hata → 10'u bulunur, sayılar, tek satır, tek LLM çağrısı | `MultiFailureContextTest`, `MultiFailureAnalysisTest`, `BuildAnalysisControllerTest` |
+| aynı hata 10× → 10 testlik tek grup | `MultiFailureContextTest`, `MultiFailureAnalysisTest`, `FailureGrouperTest` |
+| NoSuchElement / Timeout / AssertionError ayrı gruplar | `MultiFailureContextTest`, `FailureGrouperTest` |
+| 1500 senaryo, az hata → tek çağrı, prompt'ta geçen test yok | `MultiFailureContextTest`, `MultiFailureAnalysisTest` |
+| çok grup → sınırlı çağrı, hiçbir şey kaybolmaz, kısmi hata, okunamayan cevaplar | `MultiFailureAnalysisTest`, `GroupPromptTest` |
+| eksik stack trace / konum → hiçbir şey uydurulmaz | `MultiFailureContextTest`, `BuildAnalysisResponseMapperTest`, frontend `AiAnalysis.test` |
+| Maven / Jenkins / altyapı → hata grubu yok, standart kart | `MultiFailureContextTest`, frontend `AiAnalysis.test` |
+| SUCCESS → LLM çağrısı yok, sayılar okunur | `AnalyzeBuildServiceTest`, `MultiFailureContextTest` |
+| kalıcılık: tek satır, GET ile okunabilir, eski satırlar okunabilir | `AnalysisRepositoryTest` (gerçek PostgreSQL), `BuildAnalysisResponseMapperTest`, `BuildAnalysisControllerTest` |
+| iç içe Jenkins URL'si `/job/Team/job/UI-Test/125/` | `JenkinsBuildUrlTest`, `JenkinsHttpClientTest`, frontend `jenkinsUrl.test` |
+| gerçek dünya log biçimleri (runner adları, loglanmış exception'lar, rerun/flaky, Gradle, renkler, encode edilmiş yollar, REST-assured, devasa satırlar) | `FailureExtractorTest`, `TestSummaryExtractorTest` |
+| kimlik bilgisi maskeleme, prompt boyut sınırları | `PromptBuilderTest`, `GroupPromptTest` |
 
-**Frontend:** `cd frontend && npm test` — **32 Vitest tests** (URL parser, response mapping, `AnalyzeForm`,
-`AiAnalysis` single and multi-failure rendering); `npm run build` also type-checks.
+**Frontend:** `cd frontend && npm test` — **32 Vitest testi** (URL ayrıştırıcı, cevap eşleme, `AnalyzeForm`,
+`AiAnalysis` tekli ve çoklu hata gösterimi); `npm run build` tip kontrolü de yapar.
 
-After deleting or renaming classes run `mvn clean test` so stale `.class` files in `target/` are not picked up.
+Sınıfları sildikten veya yeniden adlandırdıktan sonra `target/` içindeki eski `.class` dosyaları kullanılmasın diye
+`mvn clean test` çalıştırın.
 
-## Architectural rules (keep these)
-- **Dependency direction:** infrastructure → application → domain; domain framework-free; application never
-  imports `infrastructure.*` (`ArchitectureBoundaryTest`).
-- **Provider independence:** the application knows only `LlmProvider` / `LlmCompletion`; provider names, wire
-  formats, keys and prices live only in `infrastructure/llm/<provider>` + config.
-- Controllers return DTOs, never domain models (exception: the history list returns the repository's `Summary`
-  projection, which is already exactly the list row).
-- **The analysis core does not know the database:** storing and reading happen in the controller through
-  `AnalysisRepository`.
-- **One build = one analysis = one row;** never one LLM call per test; detected failures are never dropped because
-  they were not sent to the LLM.
-- **Schema changes only through a new Flyway migration** (`V3__…`); never edit an applied one.
-- Prefer rule lists / data-driven structures over if-else chains (ErrorClassifier, RelevantLogExtractor,
-  TestSummaryExtractor, FRAMEWORK_PACKAGES, the credential and run-specific-value masks).
-- Keep parsing **tool-neutral**; tool-specific knowledge goes into strategy implementations (`InteractionExtractor`).
-- Extracted fields are `null` when not found — never guessed. Prompts list only non-null facts.
-- Secrets come from the environment, never committed; credentials in logs never reach a prompt.
+## Mimari kurallar (korunmalı)
+- **Bağımlılık yönü:** infrastructure → application → domain; domain framework'süz; application asla
+  `infrastructure.*` import etmez (`ArchitectureBoundaryTest`).
+- **Sağlayıcı bağımsızlığı:** application yalnızca `LlmProvider` / `LlmCompletion`'ı bilir; sağlayıcı adları,
+  wire formatları, anahtarlar ve fiyatlar yalnızca `infrastructure/llm/<provider>` + yapılandırmada yaşar.
+- Controller'lar DTO döndürür, asla domain modeli değil (istisna: geçmiş listesi, zaten tam olarak liste satırı olan
+  repository'nin `Summary` projection'ını döndürür).
+- **Analiz çekirdeği veritabanını bilmez:** kaydetme ve okuma, controller'da `AnalysisRepository` üzerinden yapılır.
+- **Bir build = bir analiz = bir satır;** asla test başına LLM çağrısı yok; tespit edilen hatalar LLM'e
+  gönderilmedi diye asla atılmaz.
+- **Şema değişiklikleri yalnızca yeni bir Flyway migration'ı ile** (`V3__…`); uygulanmış olan asla düzenlenmez.
+- if-else zincirleri yerine kural listelerini / veriye dayalı yapıları tercih edin (ErrorClassifier,
+  RelevantLogExtractor, TestSummaryExtractor, FRAMEWORK_PACKAGES, kimlik bilgisi ve koşuya özgü değer maskeleri).
+- Ayrıştırmayı **araçtan bağımsız** tutun; araca özgü bilgi strateji implementasyonlarına gider
+  (`InteractionExtractor`).
+- Çıkarılan alanlar bulunamadığında `null`'dır — asla tahmin edilmez. Prompt'lar yalnızca null olmayan bilgileri
+  listeler.
+- Gizli bilgiler ortamdan gelir, asla commit edilmez; loglardaki kimlik bilgileri asla bir prompt'a ulaşmaz.
 
-## Conventions & gotchas
-- **JDK 23 is the machine default**, the project targets Java 21. `pom.xml` lists Lombok explicitly in
-  `annotationProcessorPaths` because JDK 23 no longer runs annotation processors implicitly — keep it.
-- **Stale classes:** `target/` is not cleaned automatically; after removing classes run `mvn clean`.
-- **Stale process after `mvn spring-boot:run`:** the forked JVM keeps holding 8090 after a naive kill:
+## Konvansiyonlar ve dikkat edilecekler
+- **Makinenin varsayılanı JDK 23**, proje Java 21'i hedefler. JDK 23 annotation processor'ları artık kendiliğinden
+  çalıştırmadığı için `pom.xml` Lombok'u `annotationProcessorPaths` içinde açıkça listeler — kaldırmayın.
+- **Eski sınıflar:** `target/` kendiliğinden temizlenmez; sınıf sildikten sonra `mvn clean` çalıştırın.
+- **`mvn spring-boot:run` sonrası kalan süreç:** basit bir kill'den sonra fork edilmiş JVM 8090'ı tutmaya devam
+  eder:
   ```powershell
   Get-NetTCPConnection -LocalPort 8090 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
   ```
-- **401/403 from the endpoint** = missing/wrong Jenkins credentials, not a code bug. **502 "OpenAI returned HTTP
-  401"** = wrong/revoked `OPENAI_API_KEY`; **429** = rate limit or no quota.
-- **GPT-5 specifics:** no custom `temperature`; `max_output_tokens` also covers reasoning tokens, so a too-small
-  value can yield an empty answer (reported as a clear 502).
-- **Tests and the real environment:** tests that bind configuration either replace the OS environment
-  (`EnvironmentConfigBindingTest`) or set values explicitly, because an `OPENAI_API_KEY` on the developer machine
-  would otherwise leak into them.
-- **Manual test job:** `Mini-UI-Automation` — builds #1–#5 are SUCCESS; **#7 is a real Selenium failure** (locator
-  `name=qqqqqqqq`, `ExampleSteps.java:28`); #9 fails with a Selenium `TimeoutException`. Build #7's full console log
-  is the fixture `src/test/resources/logs/build-7-selenium-failure.log`.
-- **PostgreSQL 18:** Flyway logs "PostgreSQL 18.6 is newer than this version of Flyway" — a warning only.
-- **Analysis ids have gaps:** the DB tests roll back their rows, but PostgreSQL does not give used ids back.
-- **Windows shell gotcha (Git Bash):** `/tmp` in Git Bash is not the folder Windows `node` sees; use a Windows path
-  for files shared between them.
-- ⚠️ **Security:** an earlier Jenkins API token was committed in `application.yml` (initial commit). It is gone from
-  the file but still in git history — it must be revoked in Jenkins.
+- **Endpoint'ten 401/403** = eksik/yanlış Jenkins kimlik bilgisi, kod hatası değil. **502 "OpenAI returned HTTP
+  401"** = yanlış/iptal edilmiş `OPENAI_API_KEY`; **429** = hız sınırı veya kota yok.
+- **GPT-5'e özgü:** özel `temperature` yok; `max_output_tokens` reasoning token'larını da kapsar, bu yüzden çok
+  küçük bir değer boş cevaba yol açabilir (açık bir 502 olarak bildirilir).
+- **Testler ve gerçek ortam:** yapılandırma bağlayan testler ya işletim sistemi ortamının yerine kendi ortamlarını
+  koyar (`EnvironmentConfigBindingTest`) ya da değerleri açıkça ayarlar; aksi halde geliştirici makinesindeki bir
+  `OPENAI_API_KEY` testlere sızardı.
+- **Manuel test job'ı:** `Mini-UI-Automation` — #1–#5 build'leri SUCCESS; **#7 gerçek bir Selenium hatası**
+  (locator `name=qqqqqqqq`, `ExampleSteps.java:28`); #9 Selenium `TimeoutException` ile düşer. Build #7'nin tam
+  konsol logu `src/test/resources/logs/build-7-selenium-failure.log` fixture'ıdır.
+- **PostgreSQL 18:** Flyway "PostgreSQL 18.6 is newer than this version of Flyway" diye loglar — yalnızca bir uyarı.
+- **Analiz id'lerinde boşluklar var:** DB testleri satırlarını geri alır, ama PostgreSQL kullanılmış id'leri geri
+  vermez.
+- **Windows kabuk tuzağı (Git Bash):** Git Bash'teki `/tmp`, Windows `node`'unun gördüğü klasör değildir;
+  aralarında paylaşılan dosyalar için Windows yolu kullanın.
+- ⚠️ **Güvenlik:** daha önceki bir Jenkins API token'ı `application.yml` içinde commit edilmişti (ilk commit).
+  Dosyadan kaldırıldı ama git geçmişinde hâlâ duruyor — Jenkins'te iptal edilmesi gerekiyor.
 
-## Status & roadmap
-**Done**
-- Jenkins fetch with env-only credentials and cp1254-aware log decoding; nested-folder jobs.
-- Context extraction: SUCCESS short-circuit, test counts, primary failure (scenario, step, full exception block,
-  code location, UI command/locator), error category, relevant log snippet, last 200 lines.
-- **Every failed test** extracted (pretty output, Surefire/Failsafe, Gradle; reruns, flaky tests, logged exceptions
-  and runner naming variants handled), grouped by error signature, analysed with one bounded set of LLM calls
-  (normally one), per-group answer and status, stored as one row, shown as group cards with an IDE-like test view.
-- Provider-independent LLM port; OpenAI GPT-5 mini adapter; short Turkish decision-support prompts with evidence
-  priority, anti-speculation rules and credential masking; strict JSON answers; ≤ 10-line rendered text.
-- Usage statistics: provider, model, tokens, response time, estimated cost.
-- PostgreSQL history (`analyses`, Flyway V1 + V2) with list and detail endpoints; React frontend.
-- Verified end to end on 2026-10-04 against the real Jenkins, OpenAI and PostgreSQL 18 (build #7; ~6 s,
-  ~$0.0024). The multi-failure flow was verified with unit tests, the real PostgreSQL and the UI against a stub
-  API (2026-10-11/12) — **not yet against the real Jenkins/OpenAI**.
+## Durum ve yol haritası
+**Tamamlananlar**
+- Yalnızca ortamdan gelen kimlik bilgileriyle ve cp1254'ü dikkate alan log çözümlemeyle Jenkins'ten çekme; iç içe
+  klasördeki job'lar.
+- Context çıkarımı: SUCCESS kısa devresi, test sayıları, birincil hata (senaryo, step, tam exception bloğu, kod
+  konumu, UI komutu/locator), hata kategorisi, ilgili log kesiti, son 200 satır.
+- **Her başarısız test** çıkarılır (pretty çıktı, Surefire/Failsafe, Gradle; rerun'lar, flaky testler, loglanmış
+  exception'lar ve runner adlandırma varyantları ele alınır), hata imzasına göre gruplanır, sınırlı sayıda LLM
+  çağrısıyla (normalde tek) analiz edilir; grup başına cevap ve durum, tek satır olarak saklanır, IDE benzeri test
+  görünümlü grup kartları olarak gösterilir.
+- Sağlayıcıdan bağımsız LLM port'u; OpenAI GPT-5 mini adapter'ı; kanıt önceliği, spekülasyon karşıtı kurallar ve
+  kimlik bilgisi maskelemeli kısa Türkçe karar destek prompt'ları; katı JSON cevaplar; ≤ 10 satırlık metin çıktısı.
+- Kullanım istatistikleri: sağlayıcı, model, token'lar, cevap süresi, tahmini maliyet.
+- Liste ve detay endpoint'leriyle PostgreSQL geçmişi (`analyses`, Flyway V1 + V2); React frontend.
+- 2026-10-04'te gerçek Jenkins, OpenAI ve PostgreSQL 18'e karşı uçtan uca doğrulandı (build #7; ~6 sn,
+  ~$0.0024). Çoklu hata akışı birim testleri, gerçek PostgreSQL ve stub API'ye karşı arayüzle doğrulandı
+  (2026-10-11/12) — **henüz gerçek Jenkins/OpenAI'a karşı değil**.
 
-**Known limitations**
-- Failures are itemised from the console log only: JVM output (Gherkin pretty output, Surefire/Failsafe and Gradle
-  per-test reports, Java exception blocks). pytest / Jest / Cypress logs give test counts only. Interleaved output
-  of parallel runs can attribute an exception to the wrong scenario.
-- A scenario that is not shown under a failed step, in a `Failed scenarios:` list or in a runner report cannot be
-  confirmed: in a log with none of these, an exception a passing scenario logged counts as its failure.
-- Runner names are matched to scenarios by name or by the same error; an unusual naming scheme with a different
-  error text could still count a failure twice.
-- Jenkins' JUnit `testReport` API is not used (this team's jobs publish Cucumber reports, not `junit`).
-- Only the representative's stack trace and log excerpt are stored per group, not one per failed test.
-- In a big run the stored "Relevant Snippet" is dominated by `Scenario:` marker lines (`RelevantLogExtractor` is
-  unchanged); the group cards carry each group's own evidence.
-- Masking is pattern-based: text typed by Selenium (`sendKeys … value=[…]`) is not masked; a JSON field named like a
-  credential is masked even when it holds a validation message.
-- Tokens and cost of a call that failed are not in the totals (the provider reports no usage for it).
+**Bilinen kısıtlar**
+- Hatalar yalnızca konsol logundan ayrıştırılır: JVM çıktısı (Gherkin pretty çıktısı, Surefire/Failsafe ve Gradle
+  test bazlı raporları, Java exception blokları). pytest / Jest / Cypress loglarından yalnızca test sayıları çıkar.
+  Paralel koşuların birbirine karışan çıktısı bir exception'ı yanlış senaryoya bağlayabilir.
+- Başarısız bir step'in altında, bir `Failed scenarios:` listesinde veya bir runner raporunda gösterilmeyen bir
+  senaryo doğrulanamaz: bunların hiçbirinin olmadığı bir logda, geçen bir senaryonun logladığı exception onun hatası
+  sayılır.
+- Runner adları senaryolarla ada veya aynı hataya göre eşleştirilir; hata metni farklı, alışılmadık bir adlandırma
+  şeması bir hatayı yine de iki kez saydırabilir.
+- Jenkins'in JUnit `testReport` API'si kullanılmaz (bu ekibin job'ları `junit` değil Cucumber raporu yayınlar).
+- Grup başına yalnızca temsilcinin stack trace'i ve log alıntısı saklanır, her başarısız test için değil.
+- Büyük bir koşuda saklanan "Relevant Snippet"e `Scenario:` işaret satırları hâkim olur (`RelevantLogExtractor`
+  değiştirilmedi); grup kartları her grubun kendi kanıtını taşır.
+- Maskeleme kalıp tabanlıdır: Selenium'un yazdığı metin (`sendKeys … value=[…]`) maskelenmez; kimlik bilgisi gibi
+  adlandırılmış bir JSON alanı bir doğrulama mesajı tutsa bile maskelenir.
+- Başarısız bir çağrının token'ları ve maliyeti toplamlara dahil değildir (sağlayıcı onun için kullanım bildirmez).
 
-**Next**
-- Run a real multi-failure build (and the opt-in live test) once to check the group prompt and answer quality.
-- Analyse a real build of a job **inside a Jenkins folder** — supported and unit-tested, never tried against the
-  real Jenkins.
-- Decide how the app is served for the team (e.g. the frontend build in Spring's `static/` — then `/analyses/:id`
-  needs a forward to `index.html` on refresh — or a separate web server). Today it runs as two dev servers.
-- Collect real failed builds as an evaluation set; tighten the prompt where a third action is still generic.
-- Change context: the build's commits/changed files from the Jenkins API and, if possible, the source line at
-  `exceptionFile:exceptionLine`.
-- More `InteractionExtractor` implementations (Playwright, Cypress) and further LLM providers when needed.
+**Sıradakiler**
+- Grup prompt'unu ve cevap kalitesini kontrol etmek için bir kez gerçek bir çoklu hatalı build (ve isteğe bağlı
+  canlı test) koşmak.
+- **Bir Jenkins klasörü içindeki** bir job'ın gerçek build'ini analiz etmek — destekleniyor ve birim testli, ama
+  gerçek Jenkins'e karşı hiç denenmedi.
+- Uygulamanın ekibe nasıl sunulacağına karar vermek (ör. frontend build'i Spring'in `static/` klasöründe — o zaman
+  `/analyses/:id` sayfa yenilemede `index.html`'e yönlendirme ister — ya da ayrı bir web sunucusu). Bugün iki
+  geliştirme sunucusu olarak çalışıyor.
+- Gerçek başarısız build'leri bir değerlendirme seti olarak toplamak; üçüncü aksiyonun hâlâ genel kaldığı yerlerde
+  prompt'u sıkılaştırmak.
+- Değişiklik bağlamı: build'in commit'leri/değişen dosyaları Jenkins API'sinden ve mümkünse
+  `exceptionFile:exceptionLine` konumundaki kaynak satırı.
+- İhtiyaç olunca daha fazla `InteractionExtractor` implementasyonu (Playwright, Cypress) ve başka LLM sağlayıcıları.
 
-**Decided against for V1 (do not re-add without the owner)**
-- Users, projects, project members, pipelines, roles, login (built once, then removed — V2 migration).
-- A "NE OLDU?" UI section (expected / actual / mechanism) with its own `whatHappened` field — declined for now
-  (the group answers' `rootCause` says what happened, under which condition and on which evidence).
-- Async analysis, SSE/real progress events, caching, queues, extra DTO/mapper/repository layers, new tables for
-  failures.
-- Structured Evidence tab and the 6-stage progress screen (replaced by the simpler V1 screens).
+**V1 için reddedilenler (proje sahibi onaylamadan yeniden eklemeyin)**
+- Kullanıcılar, projeler, proje üyeleri, pipeline'lar, roller, giriş (bir kez yapıldı, sonra kaldırıldı — V2
+  migration).
+- Kendi `whatHappened` alanıyla bir "NE OLDU?" arayüz bölümü (beklenen / gerçek / mekanizma) — şimdilik reddedildi
+  (grup cevaplarındaki `rootCause` ne olduğunu, hangi koşulda ve hangi kanıta göre olduğunu söylüyor).
+- Asenkron analiz, SSE/gerçek ilerleme olayları, önbellekleme, kuyruklar, ek DTO/mapper/repository katmanları,
+  hatalar için yeni tablolar.
+- Yapılandırılmış Kanıt (Structured Evidence) sekmesi ve 6 aşamalı ilerleme ekranı (daha basit V1 ekranlarıyla
+  değiştirildi).
 
-**Open side-tasks**
-- Revoke the old Jenkins token (see Security).
+**Açık yan görevler**
+- Eski Jenkins token'ını iptal etmek (bkz. Güvenlik).
