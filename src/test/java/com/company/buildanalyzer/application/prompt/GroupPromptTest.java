@@ -105,6 +105,24 @@ class GroupPromptTest {
                 .doesNotContain("=== HATA GRUBU G19 —");
     }
 
+    /**
+     * Split over calls, each call still asks for a summary of the whole build and leaves the counting to the app:
+     * build #14 of Mini-UI-Automation (7 groups, 2 calls) once got "6 hata grubu toplam 9 testi" from its first call.
+     */
+    @Test
+    void asksEveryCallForAWholeBuildSummaryWithoutCounts() {
+        BuildAnalysisContext context = contextWithGroups(7, 1, 0);
+
+        List<GroupPrompt> prompts = new PromptBuilder(new AnalysisLimits()).buildGroupPrompts(context);   // 6 + 1 groups
+
+        assertThat(prompts).hasSize(2);
+        assertThat(prompts).allSatisfy(prompt -> assertThat(prompt.prompt())
+                .contains("- summary: TÜM build için, en fazla 3 kısa cümle. TÜM HATA GRUPLARI'ndaki her grubu hesaba kat; "
+                        + "ayrıntısı bu istekte olmayan gruplar için oradaki satır yeterli.")
+                .contains("Test ya da grup sayısı yazma, kendin sayma veya toplama yapma; sayıları uygulama gösteriyor.")
+                .contains("- G7: 1 test"));                                // the index the summary is written from
+    }
+
     @Test
     void splitsByPromptSizeAndKeepsEachPromptWithinTheLimit() {
         AnalysisLimits limits = new AnalysisLimits();

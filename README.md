@@ -237,7 +237,10 @@ Build #7'nin prompt'u ~20 bin karakter (~6 bin token).
   eksik kanıt doldurulmaz, eksik olduğu söylenir;
 - cevap: `{"summary": "...", "groups": [{"id": "G1", "rootCause": "...", "actions": ["..."]}]}`
   (`RootCauseSchema.FAILURE_GROUPS`, katı) — `rootCause` ≤ 3 cümle (ne oldu, hangi koşulda, hangi kanıta göre),
-  ≤ 3 önceliklendirilmiş aksiyon.
+  ≤ 3 önceliklendirilmiş aksiyon; `summary` ≤ 3 cümle ve **tüm build için**: ayrıntısı başka çağrıda olan gruplar
+  dahil (onlar için dizin satırı yeterli), en çok testi etkileyen grupların sorunu grup id'siyle, kanıtlanmış ortak
+  neden ya da kanıtlanamadığı. Build durumunu tekrarlamaz ve **test/grup sayısı yazmaz** — sayıları uygulama gösterir
+  (eskiden model ilk çağrının gruplarını kendisi sayıp yanlış toplam yazabiliyordu).
 
 **Çağrı bütçesi** (`analysis.*`, bkz. [Yapılandırma](#yapılandırma-srcmainresourcesapplicationyml)): gruplar,
 prompt `max-prompt-chars` (60 000) ve `max-groups-per-call` (6) sınırları içinde kaldıkça tek prompt'a
@@ -270,7 +273,7 @@ adlandırılmış bir JSON alanı, bir doğrulama mesajı tutsa bile maskelenir.
 - `RootCauseFormatter` gösterime hazır `aiAnalysis` metnini üretir, **en fazla 10 satır**:
   ```
   🚨 KÖK NEDEN                              🚨 BUILD ÖZETİ
-  name=qqqqqqqq locator'ı bulunamadı; …      10 başarısız testin 5'i #login-btn …
+  name=qqqqqqqq locator'ı bulunamadı; …      En çok etki eden grup G1: #login-btn …
   📍 KONUM                                   🧩 HATA GRUPLARI
   ExampleSteps.java:28                      - G1 (5 test): #login-btn bulunamadı …
   clickSearchBox()                          - G2 (4 test): pay-now-btn 10 sn içinde …
@@ -351,7 +354,7 @@ Gerçek, başarısız build #7 için cevap (uzun değerler kısaltıldı):
 (`rootCauseAnalysis: null` olur; `aiAnalysis` 🚨 BUILD ÖZETİ / 🧩 HATA GRUPLARI metnidir):
 ```json
 "testSummary": { "total": 30, "passed": 20, "failed": 10, "skipped": 0 },
-"aiSummary": "10 başarısız testin 5'i #login-btn ...; gruplar arasında ortak bir neden kanıtlanamadı.",
+"aiSummary": "En çok etki eden grup G1: #login-btn locator'ı bulunamadı; G2 ...; gruplar arasında ortak bir neden kanıtlanamadı.",
 "failureGroups": [{
   "id": "G1",
   "signature": "org.openqa.selenium.NoSuchElementException: no such element: ... @ stepdefinitions.LoginSteps.clickLogin(LoginSteps.java:31)",
@@ -652,18 +655,19 @@ OpenAI fiyatlarını değiştirirse veya başka bir model ayarlanırsa iki fiyat
 
 ## Testler
 
-**Backend:** `mvn test` — **226 test** (220 birim testi + 4 PostgreSQL testi + 2 isteğe bağlı canlı OpenAI testi).
+**Backend:** `mvn test` — **228 test** (221 birim testi + 4 PostgreSQL testi + 3 isteğe bağlı canlı OpenAI testi).
 Harici servis veya API anahtarı gerekmez: OpenAI, in-process bir HTTP sunucusu veya mock ile taklit edilir, Jenkins
 mock'lanır, controller testi repository'yi mock'lar ve gerçekçi konsol logları fixture'lardan
 (`src/test/resources/logs/`) veya `SyntheticConsoleLog` üretecinden gelir (gerçek bir koşudaki gibi Surefire'ın
 tekrarlanan raporlarıyla, istenen sayıda geçen/düşen Cucumber senaryosu).
 - `AnalysisRepositoryTest` (4 test), `DB_PASSWORD` ayarlıysa **gerçek yerel PostgreSQL**'e karşı koşar; her test
   geri alınır (rollback), veritabanında hiçbir şey kalmaz.
-- `OpenAiLiveBuild7Test` (isteğe bağlı, gerçek API, ~$0.01, logları OpenAI'a gönderir) build #7'yi, üç örnek logu
-  ve sentetik 10 hatalı bir build'i koşar: `mvn test -Dtest=OpenAiLiveBuild7Test -Dopenai.live=true`
-  (`OPENAI_API_KEY` gerekir; cevaplar `target/live-analyses.txt`'ye yazılır).
+- `OpenAiLiveBuild7Test` (isteğe bağlı, gerçek API, ~$0.02, logları OpenAI'a gönderir) build #7'yi, üç örnek logu,
+  sentetik 10 hatalı bir build'i ve 2 çağrıya bölünen 7 gruplu bir build'i (özette test/grup sayısı olmamalı) koşar:
+  `mvn test -Dtest=OpenAiLiveBuild7Test -Dopenai.live=true` (`OPENAI_API_KEY` gerekir; cevaplar
+  `target/live-analyses.txt`'ye yazılır).
 
-`DB_PASSWORD` ayarlıyken: `Tests run: 226, Failures: 0, Errors: 0, Skipped: 2` (yalnızca canlı testler atlanır).
+`DB_PASSWORD` ayarlıyken: `Tests run: 228, Failures: 0, Errors: 0, Skipped: 3` (yalnızca canlı testler atlanır).
 Geliştirici makinesinde `DB_PASSWORD` bir **Windows kullanıcı ortam değişkenidir**, bu yüzden yeni açılan her
 terminaldeki `mvn test` onu görür (IntelliJ'in run configuration'ı ortam değişkenlerini testlere veya terminallere
 aktarmaz).
@@ -678,6 +682,7 @@ aktarmaz).
 | NoSuchElement / Timeout / AssertionError ayrı gruplar | `MultiFailureContextTest`, `FailureGrouperTest` |
 | 1500 senaryo, az hata → tek çağrı, prompt'ta geçen test yok | `MultiFailureContextTest`, `MultiFailureAnalysisTest` |
 | çok grup → sınırlı çağrı, hiçbir şey kaybolmaz, kısmi hata, okunamayan cevaplar | `MultiFailureAnalysisTest`, `GroupPromptTest` |
+| çağrılara bölünen build → her çağrı tüm build'in özetini ister, sayı yazdırmaz | `GroupPromptTest`, `OpenAiLiveBuild7Test` (canlı) |
 | eksik stack trace / konum → hiçbir şey uydurulmaz | `MultiFailureContextTest`, `BuildAnalysisResponseMapperTest`, frontend `AiAnalysis.test` |
 | Maven / Jenkins / altyapı → hata grubu yok, standart kart | `MultiFailureContextTest`, frontend `AiAnalysis.test` |
 | SUCCESS → LLM çağrısı yok, sayılar okunur | `AnalyzeBuildServiceTest`, `MultiFailureContextTest` |
@@ -754,8 +759,8 @@ Sınıfları sildikten veya yeniden adlandırdıktan sonra `target/` içindeki e
 - Kullanım istatistikleri: sağlayıcı, model, token'lar, cevap süresi, tahmini maliyet.
 - Liste ve detay endpoint'leriyle PostgreSQL geçmişi (`analyses`, Flyway V1 + V2); React frontend.
 - 2026-10-04'te gerçek Jenkins, OpenAI ve PostgreSQL 18'e karşı uçtan uca doğrulandı (build #7; ~6 sn,
-  ~$0.0024). Çoklu hata akışı birim testleri, gerçek PostgreSQL ve stub API'ye karşı arayüzle doğrulandı
-  (2026-10-11/12) — **henüz gerçek Jenkins/OpenAI'a karşı değil**.
+  ~$0.0024). Çoklu hata akışı 2026-10-13'te gerçek Jenkins, OpenAI ve PostgreSQL ile doğrulandı
+  (Mini-UI-Automation build #14, `SCENARIO=MULTI_FAILURE_SET`: 15 test, 10 başarısız, 7 grup, 2 çağrı, ~$0.0065).
 
 **Bilinen kısıtlar**
 - Hatalar yalnızca konsol logundan ayrıştırılır: JVM çıktısı (Gherkin pretty çıktısı, Surefire/Failsafe ve Gradle
@@ -770,17 +775,16 @@ Sınıfları sildikten veya yeniden adlandırdıktan sonra `target/` içindeki e
 - Grup başına yalnızca temsilcinin stack trace'i ve log alıntısı saklanır, her başarısız test için değil.
 - Büyük bir koşuda saklanan "Relevant Snippet"e `Scenario:` işaret satırları hâkim olur (`RelevantLogExtractor`
   değiştirilmedi); grup ayrıntısı her grubun kendi kanıtını taşır.
-- Gruplar birden fazla LLM çağrısına bölündüğünde build özeti (`aiSummary`) ilk cevaplanan çağrıdan gelir ve model
-  yalnızca o çağrıdaki grupları sayabilir: Mini-UI-Automation build #14'te (7 grup, 10 başarısız test, 2 çağrı) özet
-  "6 hata grubu toplam 9 testi etkiliyor" dedi. Sayı kutuları ve "önce şuna bak" satırı uygulamanın kendi sayımıdır,
-  doğrudur.
+- Gruplar birden fazla LLM çağrısına bölündüğünde build özeti (`aiSummary`) ilk cevaplanan çağrıdan gelir. Eskiden
+  model o çağrıdaki grupları kendisi sayıyordu (Mini-UI-Automation build #14: 7 grup / 10 test yerine "6 hata grubu
+  toplam 9 testi"); artık prompt tüm grupları kapsamasını ve sayı yazmamasını istiyor — build #14'ün gerçek logu ve
+  canlı testle doğrulandı (2026-10-16). Bu bir talimat, garanti değildir; sayılar için ekrandaki kutular ve "önce şuna
+  bak" satırı esastır (uygulamanın kendi sayımı).
 - Maskeleme kalıp tabanlıdır: Selenium'un yazdığı metin (`sendKeys … value=[…]`) maskelenmez; kimlik bilgisi gibi
   adlandırılmış bir JSON alanı bir doğrulama mesajı tutsa bile maskelenir.
 - Başarısız bir çağrının token'ları ve maliyeti toplamlara dahil değildir (sağlayıcı onun için kullanım bildirmez).
 
 **Sıradakiler**
-- Grup prompt'unu ve cevap kalitesini kontrol etmek için bir kez gerçek bir çoklu hatalı build (ve isteğe bağlı
-  canlı test) koşmak.
 - **Bir Jenkins klasörü içindeki** bir job'ın gerçek build'ini analiz etmek — destekleniyor ve birim testli, ama
   gerçek Jenkins'e karşı hiç denenmedi.
 - Uygulamanın ekibe nasıl sunulacağına karar vermek (ör. frontend build'i Spring'in `static/` klasöründe — o zaman

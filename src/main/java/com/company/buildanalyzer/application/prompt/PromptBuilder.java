@@ -118,8 +118,11 @@ public class PromptBuilder {
             Yanıtı yalnızca şu JSON nesnesi olarak ver, başka metin ekleme:
             {"summary": "...", "groups": [{"id": "G1", "rootCause": "...", "actions": ["..."]}]}
             - summary, rootCause ve actions Türkçe yazılır (teknik ifadeler aynen kalır).
-            - summary: build geneli, en fazla 3 kısa cümle: hangi hata grupları kaç testi etkiliyor; gruplar arasında \
-            ortak bir neden ancak kanıtla gösterilebiliyorsa yaz, gösterilemiyorsa bunu söyle.
+            - summary: TÜM build için, en fazla 3 kısa cümle. TÜM HATA GRUPLARI'ndaki her grubu hesaba kat; ayrıntısı \
+            bu istekte olmayan gruplar için oradaki satır yeterli. En çok testi etkileyen grupların sorununu grup id'si \
+            ve ne olduğuyla söyle; gruplar arasında ortak bir neden ancak kanıtla gösterilebiliyorsa yaz, \
+            gösterilemiyorsa bunu söyle. Build durumunu tekrarlama. Test ya da grup sayısı yazma, kendin sayma veya \
+            toplama yapma; sayıları uygulama gösteriyor.
             - groups: bu istekte ayrıntısı verilen her HATA GRUBU için bir öğe; id aynen kullanılır (ör. "G1").
             - rootCause: en fazla 3 kısa cümle: ne oldu, hangi koşulda (adım, locator, değer, endpoint) ve hangi \
             kanıta dayanarak.

@@ -41,7 +41,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * (needs {@code OPENAI_API_KEY} in the environment). Each answer is appended, UTF-8, to
  * {@code target/live-analyses.txt} for reading. Verifies the structured answer (location from
  * the evidence, at most 3 actions, at most 10 lines) and the usage/cost numbers — and, for a synthetic
- * build with 10 failed tests in 3 groups, that one call with the strict failure-groups schema answers every group.
+ * build with 10 failed tests in 3 groups, that one call with the strict failure-groups schema answers every group;
+ * for 7 groups split over 2 calls, that the build summary writes no test or group counts of its own.
  */
 @EnabledIfSystemProperty(named = "openai.live", matches = "true")
 @EnabledIfEnvironmentVariable(named = "OPENAI_API_KEY", matches = ".+")
@@ -61,17 +62,7 @@ class OpenAiLiveBuild7Test {
     })
     void analysesTheLogIntoTheShortFormat(String log, String expectedFile, Integer expectedLine, String mustMention)
             throws IOException {
-        String consoleLog = fixture(log);
-        AnalyzeBuildService service = new AnalyzeBuildService(
-                (job, build) -> consoleLog,
-                new BuildContextBuilder(new ErrorClassifier(), new RelevantLogExtractor(),
-                        List.of(new SeleniumInteractionExtractor())),
-                new PromptBuilder(new AnalysisLimits()),
-                new OpenAiProvider(liveProperties()),
-                new RootCauseParser(),
-                new RootCauseFormatter());
-
-        BuildAnalysisResult result = service.analyze("live", 1);
+        BuildAnalysisResult result = liveService(fixture(log)).analyze("live", 1);
         report(log, result);
 
         RootCauseAnalysis analysis = result.rootCauseAnalysis();
@@ -104,17 +95,7 @@ class OpenAiLiveBuild7Test {
                 default -> log.passed("Passing scenario " + i);
             }
         }
-        String consoleLog = log.build();
-        AnalyzeBuildService service = new AnalyzeBuildService(
-                (job, build) -> consoleLog,
-                new BuildContextBuilder(new ErrorClassifier(), new RelevantLogExtractor(),
-                        List.of(new SeleniumInteractionExtractor())),
-                new PromptBuilder(new AnalysisLimits()),
-                new OpenAiProvider(liveProperties()),
-                new RootCauseParser(),
-                new RootCauseFormatter());
-
-        BuildAnalysisResult result = service.analyze("live", 2);
+        BuildAnalysisResult result = liveService(log.build()).analyze("live", 2);
         report("synthetic 30 scenarios / 10 failures", result);
 
         assertThat(result.aiSummary()).as("model answered with parseable group JSON").isNotBlank();
@@ -125,6 +106,44 @@ class OpenAiLiveBuild7Test {
         assertThat(result.groupAnalyses().get(0).rootCause()).contains("login-btn");
         assertThat(result.groupAnalyses().get(1).rootCause()).contains("pay-now-btn");
         assertThat(result.aiAnalysis().lines()).hasSizeLessThanOrEqualTo(10);
+    }
+
+    /**
+     * Shaped like build #14 of Mini-UI-Automation: 10 failures in 7 groups (3, 2, 1, 1, 1, 1, 1), so 2 calls (6 + 1).
+     * The summary comes from the first call, which has only 6 groups in detail; it once counted those itself
+     * ("6 hata grubu toplam 9 testi"). Now it must write no counts at all — the app shows them.
+     */
+    @Test
+    void writesNoCountsInTheSummaryWhenTheGroupsAreSplitOverTwoCalls() throws IOException {
+        SyntheticConsoleLog log = new SyntheticConsoleLog();
+        for (int i = 1; i <= 3; i++) {
+            log.failed("Forgot password " + i, Failure.noSuchElement("forgot-link"));
+        }
+        log.passed("Valid login").passed("Wrong password").passed("Config user").passed("Dynamic content").passed("Hidden element");
+        log.failed("Fast dynamic content 1", Failure.timeout("finish-h4")).failed("Fast dynamic content 2", Failure.timeout("finish-h4"));
+        log.failed("Secure area heading", Failure.assertion("Secure Area Dashboard", "Secure Area"));
+        for (int i = 1; i <= 4; i++) {
+            log.failed("Other scenario " + i, Failure.distinct(i));
+        }
+
+        BuildAnalysisResult result = liveService(log.build()).analyze("live", 3);
+        report("synthetic 15 scenarios / 10 failures / 7 groups / 2 calls", result);
+
+        assertThat(result.groupAnalyses()).hasSize(7)
+                .allSatisfy(group -> assertThat(group.status()).isEqualTo(FailureGroupAnalysis.Status.ANALYZED));
+        assertThat(result.aiSummary()).isNotBlank()
+                .doesNotContainPattern("\\d+\\s*(?:test|hata grubu|grup)");
+    }
+
+    private static AnalyzeBuildService liveService(String consoleLog) {
+        return new AnalyzeBuildService(
+                (job, build) -> consoleLog,
+                new BuildContextBuilder(new ErrorClassifier(), new RelevantLogExtractor(),
+                        List.of(new SeleniumInteractionExtractor())),
+                new PromptBuilder(new AnalysisLimits()),
+                new OpenAiProvider(liveProperties()),
+                new RootCauseParser(),
+                new RootCauseFormatter());
     }
 
     private static void report(String log, BuildAnalysisResult result) throws IOException {
