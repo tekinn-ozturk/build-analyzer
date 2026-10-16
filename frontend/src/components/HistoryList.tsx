@@ -34,12 +34,13 @@ export default function HistoryList() {
 
   return (
     <TableContainer component={Paper}>
-      <Table size="small" sx={{ minWidth: 520 }}>
+      <Table size="small" sx={{ minWidth: 680 }}>
         <TableHead>
           <TableRow sx={{ '& th': { fontWeight: 700, color: 'text.secondary', bgcolor: 'grey.50' } }}>
             <TableCell>Build</TableCell>
             <TableCell>Job</TableCell>
             <TableCell>Status</TableCell>
+            <TableCell>Summary</TableCell>
             <TableCell>Analysis Date</TableCell>
           </TableRow>
         </TableHead>
@@ -60,6 +61,8 @@ export default function HistoryList() {
               <TableCell sx={{ width: 130 }}>
                 <StatusChip status={analysis.buildStatus} />
               </TableCell>
+              {/* "20 başarısız test, 6 hata grubu", "NoSuchElementException", "Build başarılı" */}
+              <TableCell sx={{ color: 'text.secondary' }}>{analysis.headline}</TableCell>
               <TableCell sx={{ width: 160, color: 'text.secondary' }}>{formatDateTime(analysis.analyzedAt)}</TableCell>
             </TableRow>
           ))}

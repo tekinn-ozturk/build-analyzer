@@ -22,8 +22,11 @@ const severalFailures: Analysis = {
   failureGroups: [
     {
       id: 'G1', signature: 'org.openqa.selenium.NoSuchElementException: no such element @ LoginSteps.clickLogin(LoginSteps.java:31)',
-      failureCount: 3, exceptionType: 'org.openqa.selenium.NoSuchElementException', aiStatus: 'ANALYZED',
-      rootCause: '#login-btn locator\'ı bulunamadı.', actions: ['LoginSteps.java:31\'deki locator\'ı düzelt.'], aiNote: null,
+      failureCount: 3, exceptionType: 'org.openqa.selenium.NoSuchElementException',
+      exceptionFile: 'LoginSteps.java', exceptionLine: 31,
+      stackTrace: 'org.openqa.selenium.NoSuchElementException: no such element\n\tat LoginSteps.clickLogin(LoginSteps.java:31)',
+      aiStatus: 'ANALYZED', rootCause: '#login-btn locator\'ı bulunamadı.', actions: ['LoginSteps.java:31\'deki locator\'ı düzelt.'],
+      aiNote: null,
       failures: [
         { testContext: { scenario: 'Login 1', step: 'Giriş butonuna tıkla.', featureFile: 'features/Login.feature', featureLine: 5 },
           exceptionType: 'org.openqa.selenium.NoSuchElementException', message: 'no such element: #login-btn' },
@@ -35,8 +38,9 @@ const severalFailures: Analysis = {
     },
     {
       id: 'G2', signature: 'java.lang.AssertionError: expected [201] but found [500]',
-      failureCount: 1, exceptionType: 'java.lang.AssertionError', aiStatus: 'FAILED',
-      rootCause: null, actions: [], aiNote: 'AI çağrısı başarısız: OpenAI returned HTTP 429',
+      failureCount: 1, exceptionType: 'java.lang.AssertionError',
+      exceptionFile: null, exceptionLine: null, stackTrace: 'java.lang.AssertionError: expected [201] but found [500]',
+      aiStatus: 'FAILED', rootCause: null, actions: [], aiNote: 'AI çağrısı başarısız: OpenAI returned HTTP 429',
       failures: [
         { testContext: { scenario: 'com.acme.OrderApiTest.createOrder' },
           exceptionType: 'java.lang.AssertionError', message: 'expected [201] but found [500]' },
@@ -44,12 +48,17 @@ const severalFailures: Analysis = {
     },
     {
       id: 'G3', signature: 'Logda exception / stack trace yok',
-      failureCount: 1, exceptionType: null, aiStatus: 'SKIPPED',
-      rootCause: null, actions: [], aiNote: 'AI çağrı sınırına (1 çağrı) ulaşıldığı için ayrıntılı analiz edilmedi.',
+      failureCount: 1, exceptionType: null, exceptionFile: null, exceptionLine: null, stackTrace: null,
+      aiStatus: 'SKIPPED', rootCause: null, actions: [], aiNote: 'AI çağrı sınırına (1 çağrı) ulaşıldığı için ayrıntılı analiz edilmedi.',
       failures: [{ testContext: { scenario: 'Checkout', featureFile: 'features/Checkout.feature', featureLine: 7 }, exceptionType: null, message: null }],
     },
   ],
 };
+
+/** The text of a count tile, e.g. "Başarısız test6 / 30". */
+function tile(label: string): string | null {
+  return screen.getByText(label).parentElement!.textContent;
+}
 
 describe('AiAnalysis', () => {
   it('shows the IDE view when testContext is present', () => {
@@ -87,26 +96,45 @@ describe('AiAnalysis', () => {
     expect(screen.getByText('Test konumu bilgisi yok.')).toBeTruthy();
   });
 
-  it('shows the build summary and one card per failure group when several tests failed', () => {
+  it('shows the counts, the build summary and the largest group when several tests failed', () => {
     render(<AiAnalysis analysis={severalFailures} />);
 
+    // the runner's failed / total, the groups, the groups the AI answered
+    expect(tile('Başarısız test')).toBe('Başarısız test6 / 30');
+    expect(tile('Hata grubu')).toBe('Hata grubu3');
+    expect(tile('AI analizi')).toBe('AI analizi1 / 3 grup');
+
     expect(screen.getByText(/5 testin 3'ü #login-btn yüzünden düştü/)).toBeTruthy();
-    expect(screen.getByText('5 başarısız test · 3 hata grubu · 1 grup AI ile ayrıntılı analiz edildi')).toBeTruthy();
+    expect(screen.getByText('5 başarısız testten 3 tanesi G1\'de toplanıyor; önce bu gruba bakın.')).toBeTruthy();
     // the runner counted 6 failed tests, the log gave details of 5: said, not hidden
     expect(screen.getByText(/Test özetinde 6 başarısız test var; logdan 5 tanesinin ayrıntısı çıkarılabildi/)).toBeTruthy();
     expect(screen.getByText(/2 hata grubu AI ile ayrıntılı analiz edilmedi/)).toBeTruthy();
 
-    expect(screen.getByText('G1')).toBeTruthy();
-    expect(screen.getByText('3 test')).toBeTruthy();
+    // the list on the left
+    expect(screen.getByRole('button', { name: 'Hata grupları (3)' })).toBeTruthy();
+    expect(screen.getByText('LoginSteps.java:31')).toBeTruthy();
+
+    // the details of G1, the largest group, on the right
+    expect(screen.getByText('3 test · %60')).toBeTruthy();
+    expect(screen.getByText('LoginSteps.clickLogin(LoginSteps.java:31)')).toBeTruthy();
     expect(screen.getByText('#login-btn locator\'ı bulunamadı.')).toBeTruthy();
     expect(screen.getByText('LoginSteps.java:31\'deki locator\'ı düzelt.')).toBeTruthy();
     expect(screen.getByText('ETKİLENEN TESTLER (3)')).toBeTruthy();
     expect(screen.getByText('Login 2')).toBeTruthy();
     expect(screen.getByText('Login.feature:11')).toBeTruthy();
-    expect(screen.getByText('AI analizi yok: AI çağrısı başarısız: OpenAI returned HTTP 429')).toBeTruthy();
-    expect(screen.getByText(/AI analizi yok: AI çağrı sınırına/)).toBeTruthy();
-    expect(screen.getAllByText('HATA SEBEBİ')).toHaveLength(2); // build summary + the one analysed group
+    expect(screen.getAllByText('HATA SEBEBİ')).toHaveLength(2); // build summary + the selected group
+    expect(screen.queryByText(/AI analizi yok:/)).toBeNull(); // the other groups' answers are not shown yet
     expect(screen.queryByText('HATA ÖZETİ')).toBeNull();
+  });
+
+  it('shows another group when it is selected in the list', () => {
+    render(<AiAnalysis analysis={severalFailures} />);
+
+    fireEvent.click(screen.getByText('AssertionError'));
+
+    expect(screen.getByText('AI analizi yok: AI çağrısı başarısız: OpenAI returned HTTP 429')).toBeTruthy();
+    expect(screen.getByText('ETKİLENEN TESTLER (1)')).toBeTruthy();
+    expect(screen.queryByText('#login-btn locator\'ı bulunamadı.')).toBeNull();
   });
 
   it('opens the selected failed test in the IDE view', () => {
@@ -117,6 +145,55 @@ describe('AiAnalysis', () => {
 
     expect(screen.getByText('Tekrar giriş yap.', { exact: false })).toBeTruthy();
     expect(screen.getByText('17')).toBeTruthy();
+  });
+
+  it('lists every failed test in the tests view and opens the chosen one', () => {
+    render(<AiAnalysis analysis={severalFailures} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Testler (5)' }));
+
+    expect(screen.getByText('G1 · Login.feature:5')).toBeTruthy();
+    expect(screen.getByText('G3 · Checkout.feature:7')).toBeTruthy();
+    expect(screen.getByText('G2 · AssertionError')).toBeTruthy(); // no feature file: its exception instead
+
+    fireEvent.click(screen.getByText('G1 · Login.feature:17'));
+    expect(screen.getByText('Tekrar giriş yap.', { exact: false })).toBeTruthy();
+
+    fireEvent.click(screen.getByText('G2 · AssertionError'));
+    expect(screen.getByText('AI analizi yok: AI çağrısı başarısız: OpenAI returned HTTP 429')).toBeTruthy();
+    expect(screen.getByText('AssertionError: expected [201] but found [500]')).toBeTruthy();
+  });
+
+  it('finds tests regardless of case and Turkish letters', () => {
+    render(<AiAnalysis analysis={severalFailures} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Testler (5)' }));
+    const search = screen.getByPlaceholderText('Senaryo, feature, exception ara');
+
+    // the step "Giriş butonuna tıkla." of Login 1 and Login 2
+    fireEvent.change(search, { target: { value: 'GIRIS BUTONUNA' } });
+    expect(screen.getByText('G1 · Login.feature:5')).toBeTruthy();
+    expect(screen.getByText('G1 · Login.feature:11')).toBeTruthy();
+    expect(screen.queryByText('G1 · Login.feature:17')).toBeNull();
+    expect(screen.queryByText('G3 · Checkout.feature:7')).toBeNull();
+
+    fireEvent.change(search, { target: { value: 'ödeme sayfası' } });
+    expect(screen.getByText('Eşleşen sonuç yok.')).toBeTruthy();
+  });
+
+  it('points at the two largest groups when they hold half of the failed tests', () => {
+    // build #14 of Mini-UI-Automation: 10 failed tests in groups of 3, 2, 1, 1, 1, 1, 1
+    const [first] = severalFailures.failureGroups;
+    const failureGroups = [3, 2, 1, 1, 1, 1, 1].map((count, index) => ({ ...first, id: `G${index + 1}`, failureCount: count }));
+    render(<AiAnalysis analysis={{ ...severalFailures, failureGroups }} />);
+
+    expect(screen.getByText('10 başarısız testten 5 tanesi G1 ve G2\'de toplanıyor; önce bu gruplara bakın.')).toBeTruthy();
+  });
+
+  it('keeps the group\'s signature and stack trace under TEKNİK DETAY', () => {
+    render(<AiAnalysis analysis={severalFailures} />);
+
+    fireEvent.click(screen.getByText('TEKNİK DETAY'));
+
+    expect(screen.getByText(/at LoginSteps\.clickLogin\(LoginSteps\.java:31\)/)).toBeTruthy();
   });
 
   it('starts another analysis with its own first test selected', () => {
@@ -137,14 +214,18 @@ describe('AiAnalysis', () => {
     // once in the list and once in the IDE view (with a stale selection the IDE view would be empty)
     expect(screen.getAllByText('Login 2')).toHaveLength(2);
     expect(screen.getByText('11')).toBeTruthy();
+    // two groups of one test each: no group stands out, so no "look here first" line
+    expect(screen.queryByText(/toplanıyor/)).toBeNull();
   });
 
-  it('lists the failed tests as list items with buttons', () => {
+  it('lists the groups and the failed tests as list items with buttons', () => {
     const { container } = render(<AiAnalysis analysis={severalFailures} />);
 
-    const list = container.querySelector('ul')!;
-    expect(Array.from(list.children).every((child) => child.tagName === 'LI')).toBe(true);
-    expect(list.querySelectorAll('li [role="button"]')).toHaveLength(3);
+    const lists = container.querySelectorAll('ul');
+    expect(lists).toHaveLength(2); // the groups on the left, the selected group's tests on the right
+    lists.forEach((list) => expect(Array.from(list.children).every((child) => child.tagName === 'LI')).toBe(true));
+    expect(lists[0].querySelectorAll('li [role="button"]')).toHaveLength(3);
+    expect(lists[1].querySelectorAll('li [role="button"]')).toHaveLength(3);
   });
 
   it('invents no file or line for a test the log shows without them', () => {
@@ -154,6 +235,8 @@ describe('AiAnalysis', () => {
     expect(screen.getAllByText('com.acme.OrderApiTest.createOrder').length).toBeGreaterThan(0);
     expect(screen.getByText('AssertionError: expected [201] but found [500]')).toBeTruthy();
     expect(screen.queryByText(/OrderApiTest.*\.feature/)).toBeNull();
+    // no code location either: in its list row and in its details
+    expect(screen.getAllByText('Kod konumu logda yok')).toHaveLength(2);
   });
 
   it('keeps the single view for one failed test', () => {

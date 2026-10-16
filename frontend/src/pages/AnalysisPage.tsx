@@ -6,8 +6,8 @@ import { getAnalysis } from '../api/analysisApi';
 import AiAnalysis from '../components/AiAnalysis';
 import LogViewer from '../components/LogViewer';
 import StatusChip from '../components/StatusChip';
-import type { Analysis } from '../types/analysis';
-import { formatDateTime, formatTestSummary } from '../utils/format';
+import type { Analysis, TestSummary } from '../types/analysis';
+import { formatDateTime } from '../utils/format';
 
 export default function AnalysisPage() {
   const { id } = useParams();
@@ -54,11 +54,7 @@ export default function AnalysisPage() {
           Jenkins'te aç <OpenInNewIcon sx={{ fontSize: 14, verticalAlign: 'middle' }} />
         </Link>
       </Stack>
-      {analysis.testSummary && (
-        <Typography variant="body2" sx={{ mt: 1 }}>
-          Testler: {formatTestSummary(analysis.testSummary)}
-        </Typography>
-      )}
+      {analysis.testSummary && <TestResultBar summary={analysis.testSummary} />}
 
       <Tabs value={tab} onChange={(_, value: number) => setTab(value)} sx={{ my: 3, borderBottom: 1, borderColor: 'divider' }}>
         <Tab label="AI Analysis" />
@@ -73,6 +69,46 @@ export default function AnalysisPage() {
           buildUrl={analysis.buildUrl}
         />
       )}
+    </Box>
+  );
+}
+
+/** Failed / passed / skipped as one bar, with the counts the log printed ("20 başarısız · 10 başarılı · … · %33 başarı"). */
+function TestResultBar({ summary }: { summary: TestSummary }) {
+  const parts = [
+    { label: 'başarısız', count: summary.failed, color: 'error.main' },
+    { label: 'başarılı', count: summary.passed, color: 'success.main' },
+    { label: 'atlanan', count: summary.skipped, color: 'grey.400' },
+  ];
+  // pytest prints no total: the bar is then drawn over the counts it did print
+  const total = summary.total ?? parts.reduce((sum, part) => sum + (part.count ?? 0), 0);
+  if (total === 0) {
+    return null;
+  }
+
+  return (
+    <Box sx={{ mt: 2 }}>
+      <Box
+        role="img"
+        aria-label={parts.map((part) => `${part.count ?? '?'} ${part.label}`).join(', ')}
+        sx={{ display: 'flex', height: 10, borderRadius: 5, overflow: 'hidden', bgcolor: 'grey.200' }}
+      >
+        {parts.map((part) => (
+          <Box key={part.label} sx={{ width: `${((part.count ?? 0) / total) * 100}%`, bgcolor: part.color }} />
+        ))}
+      </Box>
+      <Stack direction="row" sx={{ mt: 1, columnGap: 2.5, rowGap: 0.5, flexWrap: 'wrap', color: 'text.secondary' }}>
+        {parts.filter((part) => part.count !== null).map((part) => (
+          <Typography key={part.label} variant="body2" sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+            <Box component="span" sx={{ width: 10, height: 10, borderRadius: 0.5, bgcolor: part.color }} />
+            {part.count} {part.label}
+          </Typography>
+        ))}
+        {summary.total !== null && <Typography variant="body2">{summary.total} test</Typography>}
+        {summary.total !== null && summary.total > 0 && summary.passed !== null && (
+          <Typography variant="body2">%{Math.round((summary.passed / summary.total) * 100)} başarı</Typography>
+        )}
+      </Stack>
     </Box>
   );
 }

@@ -101,11 +101,13 @@ OpenAI anahtarı https://platform.openai.com/api-keys adresinden oluşturulur. A
    *Analyze Build*. URL anında kontrol edilir (her derinlikteki klasörlerin içindeki job'lar sorunsuz). Senkron
    istek sürerken (genelde 3–15 sn) arayüz "Build analiz ediliyor..." gösterir. Son analizler aşağıda listelenir.
 2. **Analiz detayı** (`/analyses/:id`): build numarası, durum etiketi, job, analiz zamanı, "Jenkins'te aç" bağlantısı
-   ve — logda test özeti varsa — "Testler: 30 toplam · 20 başarılı · 10 başarısız · 0 atlanan".
+   ve — logda test özeti varsa — kırmızı/yeşil/gri bir test sonuç çubuğu: "20 başarısız · 10 başarılı · 0 atlanan ·
+   30 test · %33 başarı" (yalnızca logun yazdırdığı sayılar).
    İki sekme:
    - **AI Analysis** — analizin bulduğu şey (aşağıdaki üç duruma bakın).
    - **Relevant Logs** — filtrelenmiş log kesiti / son 200 ham satır; logun tamamı Jenkins'te kalır.
-3. **Build History** (`/history`): tüm analizler, en yenisi üstte, Jenkins tarzı tablo.
+3. **Build History** (`/history`): tüm analizler, en yenisi üstte, Jenkins tarzı tablo; **Summary** sütunu kaydın
+   `headline`'ını gösterir ("20 başarısız test, 6 hata grubu", "NoSuchElementException", "Build başarılı").
 
 **AI Analysis** neyi gösterir:
 
@@ -113,7 +115,7 @@ OpenAI anahtarı https://platform.openai.com/api-keys adresinden oluşturulur. A
 |---|---|
 | SUCCESS | yeşil "Build başarılı. Analiz edilecek bir hata yok." (LLM çağrısı yok) |
 | **tek başarısız test** veya test dışı bir hata | **HATA SEBEBİ** (AI'ın kök nedeni) → *nerede*: hata bir testten geliyorsa IDE benzeri görünüm (feature dosyası, senaryo, başarısız step ve satırı, hata), değilse sade bir **HATA ÖZETİ** kartı (Maven / Jenkins / pipeline / altyapı) → **ÇÖZÜM ÖNERİLERİ** (≤ 3 aksiyon) |
-| **birden fazla başarısız test** | **HATA SEBEBİ** = AI'ın build özeti + "10 başarısız test · 3 hata grubu · 2 grup AI ile ayrıntılı analiz edildi"; runner, logda ayrıntısı bulunandan fazla hata saydıysa bir bilgi satırı; analiz edilmemiş gruplar varsa bir uyarı. Ardından **her hata grubu için bir kart**: grup id'si, exception, test sayısı, hata imzası, grubun kendi HATA SEBEBİ / ÇÖZÜM ÖNERİLERİ (veya "AI analizi yok: <neden>"), etkilenen testlerin listesi — birini seçmek onu aynı IDE benzeri görünümde açar |
+| **birden fazla başarısız test** | Üç sayı kutusu (**Başarısız test** "20 / 30", **Hata grubu**, **AI analizi** "5 / 6 grup"); **HATA SEBEBİ** = AI'ın build özeti + en büyük bir/iki grup başarısız testlerin en az yarısını tutuyorsa uygulamanın hesapladığı "önce şuna bak" satırı ("20 başarısız testten 13 tanesi G1 ve G2'de toplanıyor; önce bu gruplara bakın."); runner, logda ayrıntısı bulunandan fazla hata saydıysa bir bilgi satırı; analiz edilmemiş gruplar varsa bir uyarı. Altında **solda liste, sağda ayrıntı**: liste iki görünümlüdür — **Hata grupları** (büyükten küçüğe; test sayısı, en büyük gruba göre oran çubuğu, `dosya:satır`, AI analizi yoksa uyarı işareti) ve **Testler** (tüm başarısız testler, grubu ve `feature:satır`'ıyla) — ve büyük/küçük harf ile Türkçe karakterden bağımsız bir arama kutusu vardır (senaryo, feature, step, exception, grup id'si). Ayrıntı seçilen grubu gösterir: exception, test sayısı ve payı, kod konumu (`paket.Sınıf.metot(Dosya.java:N)`), grubun HATA SEBEBİ / ÇÖZÜM ÖNERİLERİ (veya "AI analizi yok: <neden>"), etkilenen testler, seçilen testin IDE benzeri görünümü ve kapalı bir **TEKNİK DETAY** (hata imzası + grubun ilk testinin stack trace'i) |
 
 IDE benzeri görünüm logda olmayan bir dosya veya satırı asla göstermez: düz bir JUnit testi yalnızca adıyla
 gösterilir. Arayüz etiketleri, spesifikasyonun öyle verdiği yerlerde İngilizcedir (Analyze Build, Build History, …);
@@ -429,10 +431,10 @@ src/
   types/analysis.ts         AnalysisResponse (backend), Analysis (ekranlar), AnalysisSummary (geçmiş satırı),
                             TestContext, TestSummary, FailureGroup, TestFailure
   pages/                    DashboardPage (URL girişi + geçmiş), AnalysisPage (/analyses/:id), HistoryPage (/history)
-  components/               AnalyzeForm, HistoryList, AiAnalysis (tekli görünüm + hata grubu kartları),
+  components/               AnalyzeForm, HistoryList, AiAnalysis (tekli görünüm + çoklu hata: liste ve ayrıntı),
                             TestContextView (IDE benzeri), LogViewer, StatusChip, Layout, Sidebar
   utils/jenkinsUrl.ts       anında form geri bildirimi için URL ayrıştırıcı (backend yeniden ayrıştırır; esas olan JenkinsBuildUrl)
-  utils/format.ts           tarih, test özeti ve tip adı biçimlendirme
+  utils/format.ts           tarih ve tip adı biçimlendirme
   theme.ts                  MUI teması + monospace font
 ```
 
@@ -444,12 +446,17 @@ npm run build    # tip kontrolü + frontend/dist içine production paketi
 
 - Akış: `DashboardPage` (URL → `AnalyzeForm` → `POST /api/v1/analysis/build`) → `AnalysisPage`
   (`GET /api/v1/analyses/{id}`, AI Analysis / Relevant Logs sekmeleri) · `HistoryList` (`GET /api/v1/analyses`).
-- **Gösterim kuralları:** `ai === null` → başarı mesajı. `failureGroups`'ta birden fazla başarısız test → build
-  özeti + grup kartları. Aksi halde `testContext` karar verir: null değil → IDE benzeri görünüm, null → HATA ÖZETİ
-  kartı. Frontend hiçbir test framework'ünü bilmez; `testContext`'in her alanı opsiyoneldir.
-- Bir grup kartındaki test listesi gerçek bir listedir (`ul > li > button`); seçilen test `TestContextView`'da
-  açılır. Kartların key'i analiz id'si + grup id'sidir, böylece başka bir analiz kendi ilk testi seçili olarak
-  başlar.
+- **Gösterim kuralları:** `ai === null` → başarı mesajı. `failureGroups`'ta birden fazla başarısız test → sayı
+  kutuları, build özeti, liste + ayrıntı (`AiAnalysis.tsx` içindeki `FailureGroups` / `GroupDetail`). Aksi halde
+  `testContext` karar verir: null değil → IDE benzeri görünüm, null → HATA ÖZETİ kartı. Frontend hiçbir test
+  framework'ünü bilmez; `testContext`'in her alanı opsiyoneldir.
+- Sol liste ve "Etkilenen testler" gerçek listelerdir (`ul > li > button`); seçim (grup id'si + testin sırası) bileşen
+  state'inde tutulur, yeni route yoktur. Seçilen test `TestContextView`'da açılır. Çoklu hata görünümünün key'i analiz
+  id'sidir, böylece başka bir analiz kendi ilk grubu ve ilk testi seçili olarak başlar. Geniş ekranda sol liste
+  kaydırırken yerinde kalır (`sticky`); dar ekranda liste ayrıntının üstüne iner.
+- Kod konumu, grubun `exceptionFile` / `exceptionLine` alanlarından ve hata imzasının " @ " sonrasındaki kısmından
+  gelir; logda kod frame'i yoksa "Kod konumu logda yok" yazar. Bu sayfalarda her şey frontend'de; backend'den yalnızca
+  `GET /api/v1/analyses/{id}` ve `GET /api/v1/analyses` cevapları kullanılır.
 - `index.html` bilerek `lang="en"` kullanır: `tr` ile MUI'nin büyük harfe çevirmesi "Build"i "BUİLD" yapar; Türkçe
   başlıklar kaynakta büyük harfle yazılır ("HATA SEBEBİ").
 
@@ -679,8 +686,9 @@ aktarmaz).
 | gerçek dünya log biçimleri (runner adları, loglanmış exception'lar, rerun/flaky, Gradle, renkler, encode edilmiş yollar, REST-assured, devasa satırlar) | `FailureExtractorTest`, `TestSummaryExtractorTest` |
 | kimlik bilgisi maskeleme, prompt boyut sınırları | `PromptBuilderTest`, `GroupPromptTest` |
 
-**Frontend:** `cd frontend && npm test` — **32 Vitest testi** (URL ayrıştırıcı, cevap eşleme, `AnalyzeForm`,
-`AiAnalysis` tekli ve çoklu hata gösterimi); `npm run build` tip kontrolü de yapar.
+**Frontend:** `cd frontend && npm test` — **37 Vitest testi** (URL ayrıştırıcı, cevap eşleme, `AnalyzeForm`,
+`AiAnalysis` tekli görünüm ve çoklu hata: sayı kutuları, "önce şuna bak" satırı, liste + ayrıntı, Testler görünümü,
+Türkçe karakterden bağımsız arama); `npm run build` tip kontrolü de yapar.
 
 Sınıfları sildikten veya yeniden adlandırdıktan sonra `target/` içindeki eski `.class` dosyaları kullanılmasın diye
 `mvn clean test` çalıştırın.
@@ -739,8 +747,8 @@ Sınıfları sildikten veya yeniden adlandırdıktan sonra `target/` içindeki e
   konumu, UI komutu/locator), hata kategorisi, ilgili log kesiti, son 200 satır.
 - **Her başarısız test** çıkarılır (pretty çıktı, Surefire/Failsafe, Gradle; rerun'lar, flaky testler, loglanmış
   exception'lar ve runner adlandırma varyantları ele alınır), hata imzasına göre gruplanır, sınırlı sayıda LLM
-  çağrısıyla (normalde tek) analiz edilir; grup başına cevap ve durum, tek satır olarak saklanır, IDE benzeri test
-  görünümlü grup kartları olarak gösterilir.
+  çağrısıyla (normalde tek) analiz edilir; grup başına cevap ve durum, tek satır olarak saklanır; ekranda sayı
+  kutuları, solda aranabilir grup/test listesi ve sağda IDE benzeri test görünümlü grup ayrıntısıyla gösterilir.
 - Sağlayıcıdan bağımsız LLM port'u; OpenAI GPT-5 mini adapter'ı; kanıt önceliği, spekülasyon karşıtı kurallar ve
   kimlik bilgisi maskelemeli kısa Türkçe karar destek prompt'ları; katı JSON cevaplar; ≤ 10 satırlık metin çıktısı.
 - Kullanım istatistikleri: sağlayıcı, model, token'lar, cevap süresi, tahmini maliyet.
@@ -761,7 +769,11 @@ Sınıfları sildikten veya yeniden adlandırdıktan sonra `target/` içindeki e
 - Jenkins'in JUnit `testReport` API'si kullanılmaz (bu ekibin job'ları `junit` değil Cucumber raporu yayınlar).
 - Grup başına yalnızca temsilcinin stack trace'i ve log alıntısı saklanır, her başarısız test için değil.
 - Büyük bir koşuda saklanan "Relevant Snippet"e `Scenario:` işaret satırları hâkim olur (`RelevantLogExtractor`
-  değiştirilmedi); grup kartları her grubun kendi kanıtını taşır.
+  değiştirilmedi); grup ayrıntısı her grubun kendi kanıtını taşır.
+- Gruplar birden fazla LLM çağrısına bölündüğünde build özeti (`aiSummary`) ilk cevaplanan çağrıdan gelir ve model
+  yalnızca o çağrıdaki grupları sayabilir: Mini-UI-Automation build #14'te (7 grup, 10 başarısız test, 2 çağrı) özet
+  "6 hata grubu toplam 9 testi etkiliyor" dedi. Sayı kutuları ve "önce şuna bak" satırı uygulamanın kendi sayımıdır,
+  doğrudur.
 - Maskeleme kalıp tabanlıdır: Selenium'un yazdığı metin (`sendKeys … value=[…]`) maskelenmez; kimlik bilgisi gibi
   adlandırılmış bir JSON alanı bir doğrulama mesajı tutsa bile maskelenir.
 - Başarısız bir çağrının token'ları ve maliyeti toplamlara dahil değildir (sağlayıcı onun için kullanım bildirmez).

@@ -39,7 +39,8 @@ describe('toAnalysis', () => {
 
   it('uses the build summary for several failed tests and passes the failure groups through', () => {
     const groups: AnalysisResponse['failureGroups'] = [{
-      id: 'G1', signature: 'sig', failureCount: 2, exceptionType: 'java.lang.AssertionError', aiStatus: 'ANALYZED',
+      id: 'G1', signature: 'sig', failureCount: 2, exceptionType: 'java.lang.AssertionError',
+      exceptionFile: 'OrderSteps.java', exceptionLine: 12, stackTrace: 'java.lang.AssertionError', aiStatus: 'ANALYZED',
       rootCause: 'neden', actions: ['aksiyon'], aiNote: null, failures: [],
     }];
     const analysis = toAnalysis({

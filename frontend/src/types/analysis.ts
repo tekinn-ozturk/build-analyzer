@@ -48,6 +48,11 @@ export interface FailureGroup {
   signature: string;
   failureCount: number;
   exceptionType: string | null;
+  /** Code location of the group's first test, e.g. "LoginPage.java" + 50; null when the log has no code frame. */
+  exceptionFile: string | null;
+  exceptionLine: number | null;
+  /** Full exception block of the group's first test (only that one is stored). */
+  stackTrace: string | null;
   aiStatus: 'ANALYZED' | 'SKIPPED' | 'FAILED';
   rootCause: string | null;
   actions: string[];
